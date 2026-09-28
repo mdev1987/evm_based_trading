@@ -1,0 +1,19 @@
+node_modules/
+.bun/
+.env
+.env.*
+!.env.example
+
+# Runtime state / credentials / local logs
+.data/
+state.json
+*.log
+
+# Build / coverage output
+coverage/
+dist/
+
+# OS / editor files
+.DS_Store
+.idea/
+.vscode/

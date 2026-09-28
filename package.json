@@ -1,0 +1,29 @@
+{
+  "name": "evm-based-trading-bot",
+  "version": "2.0.0",
+  "description": "Bun + TypeScript EVM paper/live trading bot for Debot AI signals, DexScreener pricing and 0x WDK execution.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun test"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@0x/wdk-protocol-swidge-0x": "0.1.0",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.19",
+    "dexpaprika-sdk": "^1.11.1",
+    "grammy": "1.46.0",
+    "lowdb": "7.0.1",
+    "telegram-markdown-v2": "0.0.5"
+  },
+  "main": "main.ts"
+}
