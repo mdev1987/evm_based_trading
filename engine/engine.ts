@@ -5,6 +5,7 @@ import type { EvmWalletService } from "../services/wallet";
 import type { StateStore } from "./store";
 import { Strategy } from "./strategy";
 import type { PendingSwap, PriceUpdate, Position, Signal } from "./types";
+import { emptySnapshot } from "./types";
 import {
   buildBuyMessage,
   buildExitMessage,
@@ -22,6 +23,14 @@ export type TradingEngineConfig = {
   /** Base-asset USD rate for display hints; null when unknown. */
   baseUsdRate: number | null;
 };
+
+/** Compact USD for entry logs, e.g. $1.23M / $4.56K / n/a. */
+function compactUsd(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "n/a";
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
+  return `$${value.toFixed(2)}`;
+}
 
 export type EngineStats = {
   chain: string;
@@ -166,6 +175,45 @@ export class TradingEngine {
   }
 
   /**
+   * Entry snapshot gate: enforce per-chain minimum liquidity, 24h volume and
+   * 24h transaction count. A threshold of 0 disables that check. Missing data
+   * fails a check that is enabled ("unverified") so thin feeds cannot bypass
+   * the filters by reporting nothing. Returns the skip reason, or null to pass.
+   */
+  private snapshotGate(signal: Signal): string | null {
+    const { minLiquidityUsd, minVolumeUsd24h, minTxns24h } = this.config.chain;
+
+    if (minLiquidityUsd > 0) {
+      if (signal.liquidityUsd === null) {
+        return `unverified liq (need >= ${compactUsd(minLiquidityUsd)})`;
+      }
+      if (signal.liquidityUsd < minLiquidityUsd) {
+        return `low liq ${compactUsd(signal.liquidityUsd)} < ${compactUsd(minLiquidityUsd)}`;
+      }
+    }
+
+    if (minVolumeUsd24h > 0) {
+      if (signal.snapshot.volumeUsd24h === null) {
+        return `unverified vol24 (need >= ${compactUsd(minVolumeUsd24h)})`;
+      }
+      if (signal.snapshot.volumeUsd24h < minVolumeUsd24h) {
+        return `low vol24 ${compactUsd(signal.snapshot.volumeUsd24h)} < ${compactUsd(minVolumeUsd24h)}`;
+      }
+    }
+
+    if (minTxns24h > 0) {
+      if (signal.snapshot.txns24h === null) {
+        return `unverified txns (need >= ${minTxns24h})`;
+      }
+      if (signal.snapshot.txns24h < minTxns24h) {
+        return `low txns ${signal.snapshot.txns24h} < ${minTxns24h}`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Reconcile live swaps that were submitted but not finalized by the previous
    * application run or by an execution timeout.
    *
@@ -242,10 +290,24 @@ export class TradingEngine {
         return false;
       }
 
+      const snapshotSkip = this.snapshotGate(signal);
+      if (snapshotSkip) {
+        console.log(
+          `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: ${snapshotSkip}`,
+        );
+        return false;
+      }
+
       const action = this.strategy.evaluateSignal();
       if (action.type !== "BUY") return false;
 
-      console.log(`[ENGINE][${this.config.chain.name}] BUY ${signal.symbol} (via ${signal.source})`);
+      console.log(
+        `[ENGINE][${this.config.chain.name}] BUY ${signal.symbol} ${signal.tokenAddress} ` +
+          `(via ${signal.source}) | liq ${compactUsd(signal.liquidityUsd)} | ` +
+          `vol24 ${compactUsd(signal.snapshot.volumeUsd24h)} | ` +
+          `txns ${signal.snapshot.txns24h ?? "n/a"} | ` +
+          `mcap ${compactUsd(signal.snapshot.mktCapUsd)}`,
+      );
 
       let quote: Awaited<ReturnType<typeof getZeroExQuote>>;
       try {
@@ -517,6 +579,7 @@ export class TradingEngine {
       dex: signal.dex || "unknown",
       quoteSymbol: signal.quoteSymbol || this.config.chain.baseSymbol,
       liquidityUsd: signal.liquidityUsd,
+      snapshot: { ...signal.snapshot },
       source: signal.source,
     };
 
@@ -611,6 +674,7 @@ export class TradingEngine {
       submittedAt: Date.now(),
       pairAddress: signal.pairAddress,
       dex: signal.dex || "unknown",
+      snapshot: { ...signal.snapshot },
       source: signal.source,
     };
 
@@ -957,6 +1021,7 @@ export class TradingEngine {
       submittedAt: Date.now(),
       pairAddress: position.pairAddress,
       dex: position.dex || "unknown",
+      snapshot: { ...position.snapshot },
       source: position.source,
     };
 
@@ -1111,6 +1176,7 @@ export class TradingEngine {
         dex: pending.dex || "unknown",
         quoteSymbol: this.config.chain.baseSymbol,
         liquidityUsd: null,
+        snapshot: pending.snapshot ?? emptySnapshot(),
         source: pending.source || "unknown",
       };
 

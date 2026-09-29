@@ -1,7 +1,7 @@
 import { parseUnits } from "./config";
 import { DexPaprikaClient, type SearchPool, type TokenDetails } from "dexpaprika-sdk";
 
-import type { Signal } from "../engine/types";
+import { snapshotNumber, type Signal } from "../engine/types";
 
 export type DexPaprikaOptions = {
   baseUrl?: string;
@@ -84,6 +84,8 @@ type CachedTokenDetails = {
   name: string;
   decimals: number;
   priceUsd: number | null;
+  mktCapUsd: number | null;
+  fdvUsd: number | null;
   expiresAt: number;
 };
 
@@ -185,6 +187,7 @@ export class DexPaprikaPoolService {
       ? pool.liquidity_usd
       : null;
 
+    const createdMs = Date.parse(pool.created_at);
     return {
       tokenAddress: candidate,
       symbol: details.symbol,
@@ -195,6 +198,16 @@ export class DexPaprikaPoolService {
       dex: pool.dex_name || "unknown",
       quoteSymbol: this.baseSymbol,
       liquidityUsd: liquidity,
+      snapshot: {
+        volumeUsd24h: snapshotNumber(pool.volume_usd_24h),
+        txns24h: snapshotNumber(pool.transactions_24h),
+        buys24h: null,
+        sells24h: null,
+        mktCapUsd: details.mktCapUsd,
+        fdvUsd: details.fdvUsd,
+        holders: null,
+        poolCreatedAtMs: Number.isFinite(createdMs) ? createdMs : null,
+      },
       source: "dexpaprika-pools",
     };
   }
@@ -233,9 +246,45 @@ export class DexPaprikaPoolService {
       name: details.name || details.symbol,
       decimals: details.decimals,
       priceUsd: detailsPrice(details),
+      mktCapUsd: snapshotNumber(details.market_cap),
+      fdvUsd: snapshotNumber(details.summary?.fdv),
       expiresAt: Date.now() + (this.options.metaCacheTtlMs ?? 3600_000),
     };
     this.metaCache.set(key, entry);
     return entry;
+  }
+
+  /**
+   * Entry snapshot for an arbitrary token (used to enrich price-only
+   * dashboard signals before entry filters run). Returns nulls when the
+   * token is unknown; never throws — callers treat nulls as "unverified".
+   */
+  async getTokenSnapshot(address: string): Promise<{
+    liquidityUsd: number | null;
+    volumeUsd24h: number | null;
+    txns24h: number | null;
+    mktCapUsd: number | null;
+    fdvUsd: number | null;
+  }> {
+    const nulls = {
+      liquidityUsd: null,
+      volumeUsd24h: null,
+      txns24h: null,
+      mktCapUsd: null,
+      fdvUsd: null,
+    };
+    try {
+      const raw: TokenDetails = await this.client.tokens.getDetails(this.network, address);
+      const summary = raw?.summary;
+      return {
+        liquidityUsd: snapshotNumber(summary?.liquidity_usd),
+        volumeUsd24h: snapshotNumber(summary?.["24h"]?.volume_usd),
+        txns24h: snapshotNumber(summary?.["24h"]?.txns),
+        mktCapUsd: snapshotNumber(raw?.market_cap),
+        fdvUsd: snapshotNumber(summary?.fdv),
+      };
+    } catch {
+      return nulls;
+    }
   }
 }

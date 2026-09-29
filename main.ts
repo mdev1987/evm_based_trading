@@ -7,7 +7,7 @@ import { TradingEngine } from "./engine/engine";
 import { Strategy } from "./engine/strategy";
 import { EvmWalletService } from "./services/wallet";
 import { TelegramService } from "./services/telegram";
-import type { Signal } from "./engine/types";
+import { emptySnapshot, snapshotNumber, snapshotTimestamp, type Signal } from "./engine/types";
 
 type TrackedSignal = {
   lastSeenAt: number;
@@ -195,6 +195,19 @@ function normalizeSignal(signal: Awaited<ReturnType<DebotAIService["getRank"]>>[
     ? signal.pair_summary_info.liquidity
     : null;
 
+  const market = signal.market_info ?? {};
+  const snapshot = {
+    ...emptySnapshot(),
+    volumeUsd24h: snapshotNumber(market.volume),
+    txns24h: snapshotNumber(market.swaps),
+    buys24h: snapshotNumber(market.buys),
+    sells24h: snapshotNumber(market.sells),
+    mktCapUsd: snapshotNumber(market.mkt_cap),
+    fdvUsd: snapshotNumber(market.fdv),
+    holders: snapshotNumber(market.holders),
+    poolCreatedAtMs: snapshotTimestamp(signal.creation_timestamp),
+  };
+
   return {
     tokenAddress: signal.address,
     symbol: signal.symbol,
@@ -207,6 +220,7 @@ function normalizeSignal(signal: Awaited<ReturnType<DebotAIService["getRank"]>>[
       : "unknown",
     quoteSymbol: typeof signal.base_token?.symbol === "string" ? signal.base_token.symbol : "",
     liquidityUsd: liquidity,
+    snapshot,
     source: "debot-community",
   };
 }
@@ -258,6 +272,19 @@ async function createRuntime(
         limit: config.dexpaprika.poolLimit,
       })
     : null;
+  // Snapshot enricher for price-only dashboard signals. Reuses the signal
+  // pool service when present, otherwise a dedicated instance, so enrichment
+  // never depends on dexpaprika being an active signal source.
+  const snapshots = pools ??
+    (chain.dexpaprikaNetwork
+      ? new DexPaprikaPoolService(chain.dexpaprikaNetwork, chain.baseToken, chain.baseSymbol, {
+          baseUrl: config.dexpaprika.baseUrl,
+          apiKey: config.dexpaprika.apiKey || undefined,
+          timeoutMs: config.dexpaprika.timeoutMs,
+          limit: config.dexpaprika.poolLimit,
+        })
+      : null);
+  const snapshotCache = new Map<string, { at: number; liquidityUsd: number | null; volumeUsd24h: number | null; txns24h: number | null; mktCapUsd: number | null; fdvUsd: number | null }>();
   const trackedSignals = new Map<string, TrackedSignal>();
   const lastEntryAt = new Map<string, number>();
 
@@ -281,6 +308,33 @@ async function createRuntime(
           );
           if (ranks.length > 0) {
             console.log(`[DEBOT][${chain.name}] dashboard: ${ranks.length} ranks`);
+          }
+          // Dashboard items carry price only: backfill liq/vol/txns/mcap from
+          // DexPaprika (1h cache per token) so entry filters can evaluate them.
+          if (snapshots) {
+            await Promise.all(ranks.map(async (rank) => {
+              const key = rank.tokenAddress.toLowerCase();
+              const cached = snapshotCache.get(key);
+              if (cached && Date.now() - cached.at < 3600_000) {
+                rank.liquidityUsd = cached.liquidityUsd;
+                Object.assign(rank.snapshot, {
+                  volumeUsd24h: cached.volumeUsd24h,
+                  txns24h: cached.txns24h,
+                  mktCapUsd: cached.mktCapUsd,
+                  fdvUsd: cached.fdvUsd,
+                });
+                return;
+              }
+              const snap = await snapshots.getTokenSnapshot(rank.tokenAddress);
+              snapshotCache.set(key, { at: Date.now(), ...snap });
+              rank.liquidityUsd = snap.liquidityUsd;
+              Object.assign(rank.snapshot, {
+                volumeUsd24h: snap.volumeUsd24h,
+                txns24h: snap.txns24h,
+                mktCapUsd: snap.mktCapUsd,
+                fdvUsd: snap.fdvUsd,
+              });
+            }));
           }
           collected.push(...ranks);
         } else if (source === "dexpaprika" && pools) {

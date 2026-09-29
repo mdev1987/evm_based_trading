@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { Strategy } from "./strategy";
-import type { Position } from "./types";
 
+import { Strategy } from "./strategy";
+import { emptySnapshot } from "./types";
+import type { Position } from "./types";
 const strategy = new Strategy({
   takeProfits: [
     { gainPercent: 25, sellPercent: 50 },
@@ -34,6 +35,7 @@ function position(overrides: Partial<Position> = {}): Position {
     dex: "uniswap",
     quoteSymbol: "WETH",
     liquidityUsd: 100000,
+    snapshot: emptySnapshot(),
     source: "debot-community",
     ...overrides,
   };

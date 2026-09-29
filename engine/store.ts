@@ -3,7 +3,8 @@ import { dirname } from "node:path";
 import { JSONFilePreset } from "lowdb/node";
 
 import type { TradingMode } from "../services/config";
-import type { WalletState } from "./types";
+import type { EntrySnapshot, WalletState } from "./types";
+import { snapshotNumber, snapshotTimestamp } from "./types";
 
 type StateDefaults = {
   file: string;
@@ -43,6 +44,22 @@ function nonNegativeInteger(value: unknown, fallback: number): number {
 
 function finiteNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/** Repair an entry snapshot; legacy records without one get empty nulls. */
+function normalizeSnapshot(value: unknown): EntrySnapshot {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const created = record.poolCreatedAtMs ?? record.poolCreatedAt;
+  return {
+    volumeUsd24h: snapshotNumber(record.volumeUsd24h),
+    txns24h: snapshotNumber(record.txns24h ?? record.swaps24h),
+    buys24h: snapshotNumber(record.buys24h ?? record.buys),
+    sells24h: snapshotNumber(record.sells24h ?? record.sells),
+    mktCapUsd: snapshotNumber(record.mktCapUsd),
+    fdvUsd: snapshotNumber(record.fdvUsd),
+    holders: snapshotNumber(record.holders),
+    poolCreatedAtMs: snapshotTimestamp(created),
+  };
 }
 
 function normalizePosition(value: unknown): WalletState["positions"][string] | null {
@@ -89,6 +106,7 @@ function normalizePosition(value: unknown): WalletState["positions"][string] | n
     liquidityUsd: typeof position.liquidityUsd === "number" && Number.isFinite(position.liquidityUsd)
       ? position.liquidityUsd
       : null,
+    snapshot: normalizeSnapshot(position.snapshot),
     source: typeof position.source === "string" && position.source ? position.source : "unknown",
   };
 }
@@ -187,6 +205,7 @@ function migrateState(existing: unknown, defaults: StateDefaults): WalletState {
         submittedAt: finiteNumber(pending.submittedAt, Date.now()),
         pairAddress: typeof pending.pairAddress === "string" ? pending.pairAddress : "",
         dex: typeof pending.dex === "string" && pending.dex ? pending.dex : "unknown",
+        snapshot: normalizeSnapshot(pending.snapshot),
         source: typeof pending.source === "string" && pending.source ? pending.source : "unknown",
       };
     }

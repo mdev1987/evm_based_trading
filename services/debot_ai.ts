@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { Signal } from "../engine/types";
+import { emptySnapshot, type Signal } from "../engine/types";
 
 export type DebotAIDuration = "1m" | "5m";
 
@@ -202,6 +202,9 @@ export function normalizeDashboardRank(item: DebotDashboardRankItem): Signal | n
     dex,
     quoteSymbol: "",
     liquidityUsd: null,
+    // Dashboard items carry price only; main.ts enriches the snapshot from
+    // DexPaprika before the engine's entry filters run.
+    snapshot: emptySnapshot(),
     source: "debot-dashboard",
   };
 }

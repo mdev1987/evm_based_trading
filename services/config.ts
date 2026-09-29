@@ -39,6 +39,10 @@ export type ChainConfig = {
   nativeDecimals: number;
   nativeToBaseRate: number;
   explorerUrl: string;
+  /** Entry filters (USD / counts); 0 disables the corresponding gate. */
+  minLiquidityUsd: number;
+  minVolumeUsd24h: number;
+  minTxns24h: number;
 };
 
 export type TelegramConfig = {
@@ -156,6 +160,9 @@ const CHAIN_DEFAULTS: Record<SupportedChain, ChainConfig> = {
     nativeDecimals: 18,
     nativeToBaseRate: 1,
     explorerUrl: "https://arc-scan.org/tx/",
+    minLiquidityUsd: 0,
+    minVolumeUsd24h: 0,
+    minTxns24h: 0,
   },
   ROBINHOOD: {
     key: "ROBINHOOD",
@@ -206,6 +213,9 @@ const CHAIN_DEFAULTS: Record<SupportedChain, ChainConfig> = {
     nativeDecimals: 18,
     nativeToBaseRate: 1,
     explorerUrl: "https://robinhoodchain.blockscout.com/tx/",
+    minLiquidityUsd: 0,
+    minVolumeUsd24h: 0,
+    minTxns24h: 0,
   },
 };
 
@@ -430,6 +440,9 @@ function buildChainConfig(key: SupportedChain): ChainConfig {
       0,
     ),
     explorerUrl: env(`${prefix}_EXPLORER_URL`) ?? defaults.explorerUrl,
+    minLiquidityUsd: decimal(`${prefix}_MIN_LIQUIDITY_USD`, defaults.minLiquidityUsd, 0),
+    minVolumeUsd24h: decimal(`${prefix}_MIN_VOLUME_USD_24H`, defaults.minVolumeUsd24h, 0),
+    minTxns24h: integer(`${prefix}_MIN_TXNS_24H`, defaults.minTxns24h, 0),
   };
 }
 

@@ -32,6 +32,9 @@ const chain: ChainConfig = {
   nativeDecimals: 18,
   nativeToBaseRate: 1,
   explorerUrl: "https://robinhoodchain.blockscout.com/tx/",
+  minLiquidityUsd: 0,
+  minVolumeUsd24h: 0,
+  minTxns24h: 0,
 };
 
 const stats = { wins: 2, losses: 1, entries: 5, openPositions: 2 };
