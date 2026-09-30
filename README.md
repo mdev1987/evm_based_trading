@@ -175,8 +175,8 @@ The WDK EVM wallet package is currently published as a beta package, so the READ
 The strategy is entirely environment-driven:
 
 ```dotenv
-TAKE_PROFIT_LEVELS=25:50,50:100
-TRAILING_ACTIVATION_PERCENT=30
+TAKE_PROFIT_LEVELS=25:50,100:50
+TRAILING_ACTIVATION_PERCENT=25
 TRAILING_DISTANCE_PERCENT=10
 STOP_LOSS_PERCENT=25
 ```
@@ -184,8 +184,8 @@ STOP_LOSS_PERCENT=25
 This means:
 
 - +25%: sell 50% of the remaining position.
-- +50%: sell the remaining position.
-- +30%: trailing stop becomes active.
+- +100%: sell 50% of the remainder, leaving a runner to the trailing stop.
+- +25%: trailing stop becomes active.
 - Trailing distance: 10% below the highest observed price.
 - −25%: hard stop-loss, full exit via the 0x sell-quote path.
 
@@ -306,13 +306,14 @@ PAPER_INITIAL_NATIVE=0.01
 BUY_AMOUNT_BASE=0.1
 MAX_OPEN_POSITIONS=3
 SIGNAL_REENTRY_COOLDOWN_MS=21600000
+MAX_DAILY_LOSS_PCT=20
 ```
 
 ### Strategy
 
 ```dotenv
-TAKE_PROFIT_LEVELS=25:50,50:100
-TRAILING_ACTIVATION_PERCENT=30
+TAKE_PROFIT_LEVELS=25:50,100:50
+TRAILING_ACTIVATION_PERCENT=25
 TRAILING_DISTANCE_PERCENT=10
 # Time-stop: full exit via the 0x sell-quote path after holding this long (ms); 0 disables.
 # Paper and live both require a quotable route and pay the quoted network fee.

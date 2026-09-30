@@ -73,6 +73,8 @@ export type AppConfig = {
     buyAmountBase: string;
     maxOpenPositions: number;
     signalReentryCooldownMs: number;
+    /** Block new entries after losing this % of initial bank in one UTC day; 0 disables. */
+    maxDailyLossPct: number;
   };
   strategy: {
     takeProfits: TakeProfitConfig[];
@@ -351,7 +353,7 @@ function parseChains(): SupportedChain[] {
 }
 
 function parseTakeProfits(): TakeProfitConfig[] {
-  const raw = env("TAKE_PROFIT_LEVELS") ?? "25:50,50:100";
+  const raw = env("TAKE_PROFIT_LEVELS") ?? "25:50,100:50";
   const result: TakeProfitConfig[] = [];
 
   for (const entry of raw.split(",")) {
@@ -529,6 +531,7 @@ export const config: AppConfig = (() => {
     buyAmountBase: env("BUY_AMOUNT_BASE") ?? "0.1",
     maxOpenPositions: integer("MAX_OPEN_POSITIONS", 3, 1),
     signalReentryCooldownMs: integer("SIGNAL_REENTRY_COOLDOWN_MS", 6 * 60 * 60 * 1000, 0),
+    maxDailyLossPct: boundedPercent("MAX_DAILY_LOSS_PCT", 20, 100),
   };
 
   for (const chain of chains) {
@@ -537,7 +540,7 @@ export const config: AppConfig = (() => {
 
   const strategy = {
     takeProfits: parseTakeProfits(),
-    trailingActivationPercent: boundedPercent("TRAILING_ACTIVATION_PERCENT", 30),
+    trailingActivationPercent: boundedPercent("TRAILING_ACTIVATION_PERCENT", 25),
     trailingDistancePercent: boundedPercent("TRAILING_DISTANCE_PERCENT", 10, 99.999999),
     maxHoldMs: integer("TIME_STOP_MS", 24 * 60 * 60 * 1000, 0),
     stopLossPercent: boundedPercent("STOP_LOSS_PERCENT", 25, 100),

@@ -58,6 +58,7 @@ describe("TradingEngine time-stop", () => {
         mode: "paper",
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
+        maxDailyLossPct: 0,
         baseUsdRate: 1,
         // Stub 0x quote: indicative 12 USDC but guaranteed minimum 11 USDC,
         // zero gas. Paper must settle the pessimistic minimum.
@@ -150,6 +151,7 @@ describe("TradingEngine time-stop", () => {
         mode: "paper",
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
+        maxDailyLossPct: 0,
         baseUsdRate: 1,
         // 1 USDC quoted gas; paper sell must deduct 2x (swap + approval).
         quoteFn: async () => ({
@@ -234,6 +236,7 @@ describe("TradingEngine time-stop", () => {
         mode: "paper",
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
+        maxDailyLossPct: 0,
         baseUsdRate: 1,
         quoteFn: async () => ({
           fromTokenAmount: 1000n,
@@ -322,6 +325,7 @@ describe("TradingEngine time-stop", () => {
         mode: "paper",
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
+        maxDailyLossPct: 0,
         baseUsdRate: 1,
         // Indicative 500 units, guaranteed 495, 1 USDC gas, no approval on Arc.
         quoteFn: async () => ({
@@ -403,7 +407,7 @@ describe("TradingEngine entry snapshot gate", () => {
         maxHoldMs: 1000,
         stopLossPercent: 25,
       }),
-      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, baseUsdRate: 1 },
+      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, maxDailyLossPct: 0, baseUsdRate: 1 },
       undefined,
       async () => undefined,
     );
@@ -440,5 +444,106 @@ describe("TradingEngine entry snapshot gate", () => {
     );
     expect(await engine.onSignal(signal({ liquidityUsd: 5000 }))).toBe(false);
     expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
+});
+
+describe("TradingEngine daily loss halt", () => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  function buySignal(): Signal {
+    return {
+      tokenAddress: "0xhalt",
+      symbol: "HALT",
+      name: "Halt Token",
+      decimals: 18,
+      pairAddress: "0xpair",
+      priceUsd: 1,
+      dex: "argus",
+      quoteSymbol: "USDC",
+      liquidityUsd: null,
+      snapshot: emptySnapshot(),
+      source: "debot-dashboard",
+    };
+  }
+
+  async function haltEngine(realizedPnlRaw: string, riskDay: string, riskBaseline: string) {
+    const dir = `/tmp/opencode/engine-halt-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * 10n ** 18n,
+      initialNativeRaw: 100n * 10n ** 18n,
+    });
+    await store.update((state) => {
+      state.realizedPnlBaseRaw = realizedPnlRaw;
+      state.riskDay = riskDay;
+      state.riskDayStartRealizedPnlRaw = riskBaseline;
+    });
+    let quotes = 0;
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 25,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        maxDailyLossPct: 20,
+        baseUsdRate: 1,
+        quoteFn: async () => {
+          quotes += 1;
+          return {
+            fromTokenAmount: 10n * 10n ** 18n,
+            toTokenAmount: 500n * 10n ** 18n,
+            toTokenAmountMin: 495n * 10n ** 18n,
+            fees: [],
+            priceImpact: undefined,
+          };
+        },
+      },
+      undefined,
+      async () => undefined,
+    );
+    return { engine, store, quotes: () => quotes };
+  }
+
+  test("blocks entries at −20% day loss without quoting", async () => {
+    const { engine, store, quotes } = await haltEngine(
+      (-25n * 10n ** 18n).toString(),
+      today,
+      "0",
+    );
+    expect(await engine.onSignal(buySignal())).toBe(false);
+    expect(quotes()).toBe(0);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
+
+  test("allows entries below the halt threshold", async () => {
+    const { engine, store, quotes } = await haltEngine(
+      (-5n * 10n ** 18n).toString(),
+      today,
+      "0",
+    );
+    expect(await engine.onSignal(buySignal())).toBe(true);
+    expect(quotes()).toBe(1);
+    expect(Object.keys(store.data.positions)).toHaveLength(1);
+  });
+
+  test("prior-day losses reset the baseline instead of halting", async () => {
+    const { engine, store } = await haltEngine(
+      (-25n * 10n ** 18n).toString(),
+      "2000-01-01",
+      "0",
+    );
+    expect(await engine.onSignal(buySignal())).toBe(true);
+    expect(store.data.riskDay).toBe(today);
+    expect(store.data.riskDayStartRealizedPnlRaw).toBe((-25n * 10n ** 18n).toString());
   });
 });

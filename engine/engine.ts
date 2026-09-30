@@ -21,6 +21,8 @@ export type TradingEngineConfig = {
   mode: TradingMode;
   buyAmountBaseRaw: bigint;
   maxOpenPositions: number;
+  /** Block new entries after losing this % of initial bank in one UTC day; 0 disables. */
+  maxDailyLossPct: number;
   /** Base-asset USD rate for display hints; null when unknown. */
   baseUsdRate: number | null;
   /**
@@ -217,6 +219,50 @@ export class TradingEngine {
   }
 
   /**
+   * Daily loss halt: refuse new entries once today's realized loss reaches
+   * maxDailyLossPct of the initial bank. The baseline resets on UTC day
+   * rollover and persists in state across restarts. Open positions keep
+   * managing out through TP/trail/stop/time — exits are never blocked.
+   */
+  private async checkDailyLossHalt(): Promise<string | null> {
+    const pct = this.config.maxDailyLossPct;
+    if (!(pct > 0)) return null;
+
+    const day = new Date().toISOString().slice(0, 10);
+    const state = this.store.data;
+    let baseline: bigint;
+    if (state.riskDay !== day) {
+      baseline = toSignedBigInt(state.realizedPnlBaseRaw, "realizedPnlBaseRaw");
+      const baselineRaw = baseline.toString();
+      await this.store.update((draft) => {
+        draft.riskDay = day;
+        draft.riskDayStartRealizedPnlRaw = baselineRaw;
+      });
+    } else {
+      baseline = toSignedBigInt(
+        state.riskDayStartRealizedPnlRaw,
+        "riskDayStartRealizedPnlRaw",
+      );
+    }
+
+    const current = toSignedBigInt(
+      this.store.data.realizedPnlBaseRaw,
+      "realizedPnlBaseRaw",
+    );
+    const dayLoss = baseline - current;
+    if (dayLoss <= 0n) return null;
+    const initial = toBigInt(
+      this.store.data.initialBalanceBaseRaw,
+      "initialBalanceBaseRaw",
+    );
+    const maxLoss = (initial * BigInt(Math.round(pct * 100))) / 10000n;
+    if (maxLoss > 0n && dayLoss >= maxLoss) {
+      return `daily loss halt (−${pct}% of bank)`;
+    }
+    return null;
+  }
+
+  /**
    * Entry snapshot gate: enforce per-chain minimum liquidity, 24h volume and
    * 24h transaction count. A threshold of 0 disables that check. Missing data
    * fails a check that is enabled ("unverified") unless the chain allows
@@ -334,6 +380,25 @@ export class TradingEngine {
         console.log(
           `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: max open/pending positions`,
         );
+        return false;
+      }
+
+      const haltReason = await this.checkDailyLossHalt();
+      if (haltReason) {
+        console.log(
+          `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: ${haltReason}`,
+        );
+        await this.history()?.recordSkip({
+          chain: this.config.chain.name,
+          symbol: signal.symbol,
+          tokenAddress: signal.tokenAddress,
+          source: signal.source,
+          reason: "daily-loss-halt",
+          liqUsd: signal.liquidityUsd,
+          vol24Usd: signal.snapshot.volumeUsd24h,
+          txns24: signal.snapshot.txns24h,
+          eventAt: Date.now(),
+        });
         return false;
       }
 

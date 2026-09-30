@@ -256,6 +256,7 @@ async function createRuntime(
         ? paper.buyRaw
         : parseUnits(config.risk.buyAmountBase, chain.baseDecimals, "BUY_AMOUNT_BASE"),
       maxOpenPositions: config.risk.maxOpenPositions,
+      maxDailyLossPct: config.risk.maxDailyLossPct,
       baseUsdRate: config.mode === "paper" ? paper.usdRate : null,
       history,
     },
@@ -503,6 +504,9 @@ async function main(): Promise<void> {
   console.log(
     `Stop   : ${config.strategy.stopLossPercent > 0 ? `-${config.strategy.stopLossPercent}%` : "disabled"}`,
   );
+  console.log(
+    `Halt   : ${config.risk.maxDailyLossPct > 0 ? `-${config.risk.maxDailyLossPct}%/day` : "disabled"}`,
+  );
 
   const telegram = new TelegramService(config.telegram);
   await telegram.verify();
@@ -556,6 +560,9 @@ async function main(): Promise<void> {
         `-${config.strategy.trailingDistancePercent}% distance`,
       stopSummary: config.strategy.stopLossPercent > 0
         ? `-${config.strategy.stopLossPercent}%`
+        : "disabled",
+      haltSummary: config.risk.maxDailyLossPct > 0
+        ? `-${config.risk.maxDailyLossPct}%/day`
         : "disabled",
     });
 

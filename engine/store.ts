@@ -130,6 +130,8 @@ function defaultState(defaults: StateDefaults): WalletState {
     peakEquityBase: Number(defaults.initialBaseRaw),
     maxDrawdownBase: 0,
     lastWalletSyncAt: 0,
+    riskDay: "",
+    riskDayStartRealizedPnlRaw: "0",
   };
 }
 
@@ -236,6 +238,12 @@ function migrateState(existing: unknown, defaults: StateDefaults): WalletState {
     ),
     maxDrawdownBase: Math.max(0, finiteNumber(value.maxDrawdownBase, 0)),
     lastWalletSyncAt: nonNegativeInteger(value.lastWalletSyncAt, 0),
+    riskDay: typeof value.riskDay === "string" ? value.riskDay : "",
+    riskDayStartRealizedPnlRaw: signedRaw(
+      value.riskDayStartRealizedPnlRaw,
+      0n,
+      "riskDayStartRealizedPnlRaw",
+    ),
   };
 }
 

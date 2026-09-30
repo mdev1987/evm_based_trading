@@ -163,4 +163,8 @@ export type WalletState = {
   peakEquityBase: number;
   maxDrawdownBase: number;
   lastWalletSyncAt: number;
+  /** UTC day (YYYY-MM-DD) the daily-loss halt baseline was taken. */
+  riskDay: string;
+  /** Realized PnL at the start of riskDay; day loss = current − baseline. */
+  riskDayStartRealizedPnlRaw: string;
 };
