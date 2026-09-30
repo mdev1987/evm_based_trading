@@ -383,6 +383,23 @@ export class TradingEngine {
         return false;
       }
 
+      // Cheap preflight before spending a 0x quote: the base leg must cover
+      // the trade amount on its own (the fee leg is verified after the quote).
+      // Paper reads the store for free; live keeps the post-quote check to
+      // avoid an RPC storm per signal.
+      if (this.config.mode === "paper") {
+        const paperBase = toBigInt(
+          this.store.data.balanceBaseRaw,
+          "balanceBaseRaw",
+        );
+        if (paperBase < this.config.buyAmountBaseRaw) {
+          console.log(
+            `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: insufficient ${this.config.chain.baseSymbol} (pre-quote)`,
+          );
+          return false;
+        }
+      }
+
       const haltReason = await this.checkDailyLossHalt();
       if (haltReason) {
         console.log(

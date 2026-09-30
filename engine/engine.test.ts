@@ -536,8 +536,7 @@ describe("TradingEngine daily loss halt", () => {
     expect(Object.keys(store.data.positions)).toHaveLength(1);
   });
 
-  test("prior-day losses reset the baseline instead of halting", async () => {
-    const { engine, store } = await haltEngine(
+  test("prior-day losses reset the baseline instead of halting", async () => {    const { engine, store } = await haltEngine(
       (-25n * 10n ** 18n).toString(),
       "2000-01-01",
       "0",
@@ -545,5 +544,48 @@ describe("TradingEngine daily loss halt", () => {
     expect(await engine.onSignal(buySignal())).toBe(true);
     expect(store.data.riskDay).toBe(today);
     expect(store.data.riskDayStartRealizedPnlRaw).toBe((-25n * 10n ** 18n).toString());
+  });
+
+  test("skips before quoting when the paper base cannot cover the trade", async () => {
+    const dir = `/tmp/opencode/engine-prefund-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * 10n ** 18n,
+      initialNativeRaw: 100n * 10n ** 18n,
+    });
+    await store.update((state) => {
+      state.balanceBaseRaw = (1n * 10n ** 18n).toString();
+      state.balanceNativeRaw = (1n * 10n ** 18n).toString();
+    });
+    let quotes = 0;
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 25,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        maxDailyLossPct: 0,
+        baseUsdRate: 1,
+        quoteFn: async () => {
+          quotes += 1;
+          throw new Error("quote must not be called without funds");
+        },
+      },
+      undefined,
+      async () => undefined,
+    );
+    expect(await engine.onSignal(buySignal())).toBe(false);
+    expect(quotes).toBe(0);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
   });
 });
