@@ -43,6 +43,8 @@ export type ChainConfig = {
   minLiquidityUsd: number;
   minVolumeUsd24h: number;
   minTxns24h: number;
+  /** When true, missing snapshot data passes enabled gates (measured values still gated). */
+  allowUnverifiedSnapshot: boolean;
 };
 
 export type TelegramConfig = {
@@ -166,6 +168,7 @@ const CHAIN_DEFAULTS: Record<SupportedChain, ChainConfig> = {
     minLiquidityUsd: 0,
     minVolumeUsd24h: 0,
     minTxns24h: 0,
+    allowUnverifiedSnapshot: false,
   },
   ROBINHOOD: {
     key: "ROBINHOOD",
@@ -219,6 +222,7 @@ const CHAIN_DEFAULTS: Record<SupportedChain, ChainConfig> = {
     minLiquidityUsd: 0,
     minVolumeUsd24h: 0,
     minTxns24h: 0,
+    allowUnverifiedSnapshot: false,
   },
 };
 
@@ -446,6 +450,7 @@ function buildChainConfig(key: SupportedChain): ChainConfig {
     minLiquidityUsd: decimal(`${prefix}_MIN_LIQUIDITY_USD`, defaults.minLiquidityUsd, 0),
     minVolumeUsd24h: decimal(`${prefix}_MIN_VOLUME_USD_24H`, defaults.minVolumeUsd24h, 0),
     minTxns24h: integer(`${prefix}_MIN_TXNS_24H`, defaults.minTxns24h, 0),
+    allowUnverifiedSnapshot: bool(`${prefix}_ALLOW_UNVERIFIED_SNAPSHOT`, defaults.allowUnverifiedSnapshot),
   };
 }
 

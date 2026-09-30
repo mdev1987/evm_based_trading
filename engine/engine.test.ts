@@ -29,6 +29,7 @@ const chain: ChainConfig = {
   minLiquidityUsd: 0,
   minVolumeUsd24h: 0,
   minTxns24h: 0,
+  allowUnverifiedSnapshot: false,
 };
 
 describe("TradingEngine time-stop", () => {
@@ -181,6 +182,14 @@ describe("TradingEngine entry snapshot gate", () => {
         signal({ snapshot: { ...emptySnapshot(), volumeUsd24h: 20000, txns24h: 3 } }),
       ),
     ).toBe(false);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
+
+  test("measured values still gate when unverified is allowed", async () => {
+    const { engine, store } = await gateEngine(
+      gatedChain({ minLiquidityUsd: 20000, allowUnverifiedSnapshot: true }),
+    );
+    expect(await engine.onSignal(signal({ liquidityUsd: 5000 }))).toBe(false);
     expect(Object.keys(store.data.positions)).toHaveLength(0);
   });
 });

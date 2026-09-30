@@ -212,35 +212,40 @@ export class TradingEngine {
   /**
    * Entry snapshot gate: enforce per-chain minimum liquidity, 24h volume and
    * 24h transaction count. A threshold of 0 disables that check. Missing data
-   * fails a check that is enabled ("unverified") so thin feeds cannot bypass
-   * the filters by reporting nothing. Returns the skip reason, or null to pass.
+   * fails a check that is enabled ("unverified") unless the chain allows
+   * unverified snapshots — measured values are always gated either way.
+   * Returns the skip reason, or null to pass.
    */
   private snapshotGate(signal: Signal): string | null {
-    const { minLiquidityUsd, minVolumeUsd24h, minTxns24h } = this.config.chain;
+    const { minLiquidityUsd, minVolumeUsd24h, minTxns24h, allowUnverifiedSnapshot } =
+      this.config.chain;
 
     if (minLiquidityUsd > 0) {
       if (signal.liquidityUsd === null) {
-        return `unverified liq (need >= ${compactUsd(minLiquidityUsd)})`;
-      }
-      if (signal.liquidityUsd < minLiquidityUsd) {
+        if (!allowUnverifiedSnapshot) {
+          return `unverified liq (need >= ${compactUsd(minLiquidityUsd)})`;
+        }
+      } else if (signal.liquidityUsd < minLiquidityUsd) {
         return `low liq ${compactUsd(signal.liquidityUsd)} < ${compactUsd(minLiquidityUsd)}`;
       }
     }
 
     if (minVolumeUsd24h > 0) {
       if (signal.snapshot.volumeUsd24h === null) {
-        return `unverified vol24 (need >= ${compactUsd(minVolumeUsd24h)})`;
-      }
-      if (signal.snapshot.volumeUsd24h < minVolumeUsd24h) {
+        if (!allowUnverifiedSnapshot) {
+          return `unverified vol24 (need >= ${compactUsd(minVolumeUsd24h)})`;
+        }
+      } else if (signal.snapshot.volumeUsd24h < minVolumeUsd24h) {
         return `low vol24 ${compactUsd(signal.snapshot.volumeUsd24h)} < ${compactUsd(minVolumeUsd24h)}`;
       }
     }
 
     if (minTxns24h > 0) {
       if (signal.snapshot.txns24h === null) {
-        return `unverified txns (need >= ${minTxns24h})`;
-      }
-      if (signal.snapshot.txns24h < minTxns24h) {
+        if (!allowUnverifiedSnapshot) {
+          return `unverified txns (need >= ${minTxns24h})`;
+        }
+      } else if (signal.snapshot.txns24h < minTxns24h) {
         return `low txns ${signal.snapshot.txns24h} < ${minTxns24h}`;
       }
     }

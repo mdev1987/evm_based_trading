@@ -35,6 +35,7 @@ const chain: ChainConfig = {
   minLiquidityUsd: 0,
   minVolumeUsd24h: 0,
   minTxns24h: 0,
+  allowUnverifiedSnapshot: false,
 };
 
 const stats = { wins: 2, losses: 1, entries: 5, openPositions: 2 };
