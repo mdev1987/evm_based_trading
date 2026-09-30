@@ -33,7 +33,7 @@ const chain: ChainConfig = {
 };
 
 describe("TradingEngine time-stop", () => {
-  test("closes an overstayed paper position at mark price", async () => {
+  test("closes an overstayed paper position via the 0x sell-quote path", async () => {
     const dir = `/tmp/opencode/engine-time-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const store = await createStateStore({
       file: `${dir}/arc.json`,
@@ -52,7 +52,21 @@ describe("TradingEngine time-stop", () => {
         trailingDistancePercent: 10,
         maxHoldMs: 1000,
       }),
-      { chain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, baseUsdRate: 1 },
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        baseUsdRate: 1,
+        // Stub 0x quote: 1000 token units -> 11 USDC proceeds, zero gas.
+        quoteFn: async () => ({
+          fromTokenAmount: 1000n,
+          toTokenAmount: 11n * 10n ** 18n,
+          toTokenAmountMin: 11n * 10n ** 18n,
+          fees: [],
+          priceImpact: undefined,
+        }),
+      },
       undefined,
       async (message) => {
         messages.push(message);
@@ -87,7 +101,7 @@ describe("TradingEngine time-stop", () => {
       };
     });
 
-    // +10% move after the hold expired: TIME exit at mark, not TP (needs +25%).
+    // +10% move after the hold expired: TIME exit via quote, not TP (needs +25%).
     await engine.onPrice({
       tokenAddress: "0xtoken",
       symbol: "OLD",

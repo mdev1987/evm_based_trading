@@ -1,6 +1,6 @@
 import type { ChainConfig, TradingMode } from "../services/config";
 import { formatUnits } from "../services/config";
-import { getZeroExQuote, ZeroExQuoteError } from "../services/zero_ex";
+import { getZeroExQuote, ZeroExQuoteError, type ZeroExQuote, type ZeroExQuoteParams } from "../services/zero_ex";
 import type { EvmWalletService } from "../services/wallet";
 import type { HistoryService } from "../services/history";
 import type { StateStore } from "./store";
@@ -23,6 +23,13 @@ export type TradingEngineConfig = {
   maxOpenPositions: number;
   /** Base-asset USD rate for display hints; null when unknown. */
   baseUsdRate: number | null;
+  /**
+   * Quote function for 0x indicative prices. Defaults to the live quote path;
+   * tests inject a stub so exits can be exercised without network access.
+   * Paper and live use the same function, so paper fills/fees match the
+   * live preflight exactly.
+   */
+  quoteFn?: (params: ZeroExQuoteParams) => Promise<ZeroExQuote>;
   /** DuckDB analytical mirror; null disables history writes (fail-open). */
   history?: HistoryService | null;
 };
@@ -362,7 +369,7 @@ export class TradingEngine {
 
       let quote: Awaited<ReturnType<typeof getZeroExQuote>>;
       try {
-        quote = await getZeroExQuote({
+        quote = await this.quote({
           chainId: this.config.chain.chainId,
           fromToken: this.config.chain.baseToken,
           toToken: signal.tokenAddress,
@@ -577,6 +584,10 @@ export class TradingEngine {
   /** Persist metrics modified by `getStats()`, especially peak/drawdown data. */
   async persistMetrics(): Promise<void> {
     await this.store.save();
+  }
+
+  private async quote(params: ZeroExQuoteParams): Promise<ZeroExQuote> {
+    return (this.config.quoteFn ?? getZeroExQuote)(params);
   }
 
   private async getWalletBalances(): Promise<{
@@ -815,87 +826,14 @@ export class TradingEngine {
   /**
    * Time-stop exit for positions held past the configured maximum.
    *
-   * Paper mode settles at the latest mark price without requiring a 0x route,
-   * which frees capital stranded on illiquid fresh launches. Live mode still
-   * attempts a real swap through the normal path.
+   * Both paper and live exit through the standard 0x sell-quote path, so a
+   * paper TIME exit pays the same estimated network fee and realizes the
+   * same quote proceeds a live swap would preflight. When no route exists
+   * the position stays open in both modes (stranded capital, not fantasy
+   * mark-price proceeds).
    */
   private async closeExpired(position: Position): Promise<void> {
-    if (this.config.mode !== "paper") {
-      await this.sellAll(position, "TIME");
-      return;
-    }
-
-    const quantity = toBigInt(position.quantityRaw, "position.quantityRaw");
-    const cost = toBigInt(position.costBaseRaw, "position.costBaseRaw");
-    if (quantity <= 0n || cost <= 0n) return;
-    if (!(position.entryPriceUsd > 0) || !(position.currentPriceUsd > 0)) return;
-
-    // Exact integer mark valuation: proceeds = cost * exit / entry.
-    const entryScaled = BigInt(Math.round(position.entryPriceUsd * 1_000_000_000_000));
-    const exitScaled = BigInt(Math.round(position.currentPriceUsd * 1_000_000_000_000));
-    if (entryScaled <= 0n || exitScaled <= 0n) return;
-    const proceeds = (cost * exitScaled) / entryScaled;
-    if (proceeds <= 0n) return;
-
-    const realizedPnl = proceeds - cost;
-    const key = position.tokenAddress.toLowerCase();
-    const before = await this.getWalletBalances();
-    const afterBase = before.baseRaw + proceeds;
-    const afterNative = this.config.chain.baseIsNative
-      ? afterBase
-      : before.nativeRaw;
-
-    const totalPositionPnl = await this.applySellResult(
-      position,
-      key,
-      0n,
-      0n,
-      realizedPnl,
-      0n,
-      afterBase,
-      afterNative,
-      undefined,
-      { reason: "TIME", exitPriceUsd: position.currentPriceUsd, sellPercent: 100 },
-    );
-
-    const meta = this.positionMeta(position);
-    await this.notify(
-      buildExitMessage({
-        chain: this.config.chain,
-        mode: "paper",
-        closed: true,
-        reason: "TIME",
-        tokenName: meta.tokenName,
-        symbol: position.symbol,
-        tokenAddress: position.tokenAddress,
-        pairAddress: position.pairAddress,
-        dex: meta.dex,
-        quoteSymbol: meta.quoteSymbol,
-        liquidityUsd: position.liquidityUsd,
-        entryPriceUsd: position.entryPriceUsd,
-        exitPriceUsd: position.currentPriceUsd,
-        highestPriceUsd: position.highestPriceUsd,
-        sellPercent: 100,
-        proceedsBaseRaw: proceeds,
-        realizedPnlBaseRaw: realizedPnl,
-        totalPositionPnlBaseRaw: totalPositionPnl,
-        remainingQuantityRaw: 0n,
-        remainingQuantityDecimals: position.decimals,
-        remainingCostBaseRaw: 0n,
-        networkFeeRaw: 0n,
-        before,
-        after: { baseRaw: afterBase, nativeRaw: afterNative },
-        openedAt: position.openedAt,
-        closedAt: Date.now(),
-        stats: this.winRateSnapshot(),
-        baseUsdRate: this.config.baseUsdRate,
-        source: position.source,
-      }),
-    );
-
-    console.log(
-      `[ENGINE][${this.config.chain.name}] TIME-CLOSED ${position.symbol} | position PnL ${formatUnits(totalPositionPnl, this.config.chain.baseDecimals)} ${this.config.chain.baseSymbol}`,
-    );
+    await this.sellAll(position, "TIME");
   }
 
   private async sell(
@@ -912,7 +850,7 @@ export class TradingEngine {
 
     let quote: Awaited<ReturnType<typeof getZeroExQuote>>;
     try {
-      quote = await getZeroExQuote({
+      quote = await this.quote({
         chainId: this.config.chain.chainId,
         fromToken: position.tokenAddress,
         toToken: this.config.chain.baseToken,

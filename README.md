@@ -312,8 +312,8 @@ SIGNAL_REENTRY_COOLDOWN_MS=21600000
 TAKE_PROFIT_LEVELS=25:50,50:100
 TRAILING_ACTIVATION_PERCENT=30
 TRAILING_DISTANCE_PERCENT=10
-# Time-stop: full exit at mark price after holding this long (ms); 0 disables.
-# Paper mode settles at the latest DexScreener mark without needing a 0x route.
+# Time-stop: full exit via the 0x sell-quote path after holding this long (ms); 0 disables.
+# Paper and live both require a quotable route and pay the quoted network fee.
 TIME_STOP_MS=86400000
 ```
 
