@@ -317,33 +317,42 @@ async function createRuntime(
           // DexPaprika (1h cache per token) so entry filters can evaluate them.
           // Complete misses cache only 5 minutes: a token indexed seconds
           // after first sight must not stay "unverified" for a full hour.
+          // Enrichment runs in small staggered batches: one Promise.all over
+          // all ranks bursts DexPaprika and trades 429s for null snapshots.
           if (snapshots) {
-            await Promise.all(ranks.map(async (rank) => {
-              const key = rank.tokenAddress.toLowerCase();
-              const cached = snapshotCache.get(key);
-              const ttl = cached && (cached.liquidityUsd !== null || cached.volumeUsd24h !== null || cached.txns24h !== null)
-                ? 3600_000
-                : 300_000;
-              if (cached && Date.now() - cached.at < ttl) {
-                rank.liquidityUsd = cached.liquidityUsd;
+            const ENRICH_BATCH = 5;
+            const ENRICH_GAP_MS = 250;
+            for (let index = 0; index < ranks.length; index += ENRICH_BATCH) {
+              await Promise.all(ranks.slice(index, index + ENRICH_BATCH).map(async (rank) => {
+                const key = rank.tokenAddress.toLowerCase();
+                const cached = snapshotCache.get(key);
+                const ttl = cached && (cached.liquidityUsd !== null || cached.volumeUsd24h !== null || cached.txns24h !== null)
+                  ? 3600_000
+                  : 300_000;
+                if (cached && Date.now() - cached.at < ttl) {
+                  rank.liquidityUsd = cached.liquidityUsd;
+                  Object.assign(rank.snapshot, {
+                    volumeUsd24h: cached.volumeUsd24h,
+                    txns24h: cached.txns24h,
+                    mktCapUsd: cached.mktCapUsd,
+                    fdvUsd: cached.fdvUsd,
+                  });
+                  return;
+                }
+                const snap = await snapshots.getTokenSnapshot(rank.tokenAddress);
+                snapshotCache.set(key, { at: Date.now(), ...snap });
+                rank.liquidityUsd = snap.liquidityUsd;
                 Object.assign(rank.snapshot, {
-                  volumeUsd24h: cached.volumeUsd24h,
-                  txns24h: cached.txns24h,
-                  mktCapUsd: cached.mktCapUsd,
-                  fdvUsd: cached.fdvUsd,
+                  volumeUsd24h: snap.volumeUsd24h,
+                  txns24h: snap.txns24h,
+                  mktCapUsd: snap.mktCapUsd,
+                  fdvUsd: snap.fdvUsd,
                 });
-                return;
+              }));
+              if (index + ENRICH_BATCH < ranks.length) {
+                await new Promise((resolve) => setTimeout(resolve, ENRICH_GAP_MS));
               }
-              const snap = await snapshots.getTokenSnapshot(rank.tokenAddress);
-              snapshotCache.set(key, { at: Date.now(), ...snap });
-              rank.liquidityUsd = snap.liquidityUsd;
-              Object.assign(rank.snapshot, {
-                volumeUsd24h: snap.volumeUsd24h,
-                txns24h: snap.txns24h,
-                mktCapUsd: snap.mktCapUsd,
-                fdvUsd: snap.fdvUsd,
-              });
-            }));
+            }
           }
           collected.push(...ranks);
         } else if (source === "dexpaprika" && pools) {
@@ -441,6 +450,9 @@ async function createRuntime(
       baseUrl: config.dexscreener.baseUrl,
       timeoutMs: config.dexscreener.timeoutMs,
       maxAddresses: config.dexscreener.maxAddresses,
+      // Pin each tracked token to its signal pair so exits always evaluate
+      // against one deterministic venue per poll.
+      preferredPairs: () => engine.getPricePreferences(),
       onUpdate: (prices: TokenPrice[]) => {
         for (const price of prices) {
           if (config.logPrices) {

@@ -181,15 +181,20 @@ function migrateState(existing: unknown, defaults: StateDefaults): WalletState {
     for (const [id, candidate] of Object.entries(value.pendingSwaps)) {
       if (!candidate || typeof candidate !== "object") continue;
       const pending = candidate as Partial<WalletState["pendingSwaps"][string]>;
-      if (!pending.id || !pending.hash || (pending.side !== "BUY" && pending.side !== "SELL")) continue;
+      if (!pending.id || (pending.side !== "BUY" && pending.side !== "SELL")) continue;
       if (!pending.tokenAddress || !pending.symbol) continue;
 
       pendingSwaps[id] = {
         id: String(pending.id),
-        hash: String(pending.hash),
+        // Empty until the wallet submission returns an on-chain hash
+        // (PREPARED/UNKNOWN journal stages predate the broadcast result).
+        hash: typeof pending.hash === "string" ? pending.hash : "",
         side: pending.side,
         tokenAddress: String(pending.tokenAddress),
         symbol: String(pending.symbol),
+        tokenName: typeof pending.tokenName === "string" && pending.tokenName
+          ? pending.tokenName
+          : String(pending.symbol),
         decimals: Number.isInteger(pending.decimals) && Number(pending.decimals) >= 0
           ? Number(pending.decimals)
           : 18,
@@ -209,6 +214,14 @@ function migrateState(existing: unknown, defaults: StateDefaults): WalletState {
         dex: typeof pending.dex === "string" && pending.dex ? pending.dex : "unknown",
         snapshot: normalizeSnapshot(pending.snapshot),
         source: typeof pending.source === "string" && pending.source ? pending.source : "unknown",
+        entryLiquidityUsd: typeof pending.entryLiquidityUsd === "number" &&
+            Number.isFinite(pending.entryLiquidityUsd)
+          ? pending.entryLiquidityUsd
+          : null,
+        stage: pending.stage === "PREPARED" || pending.stage === "UNKNOWN"
+          ? pending.stage
+          : "SUBMITTED",
+        reviewNotified: pending.reviewNotified === true,
       };
     }
   }

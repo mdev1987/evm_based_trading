@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { createStateStore } from "./store";
-import { TradingEngine } from "./engine";
+import { TradingEngine, type TradingEngineConfig } from "./engine";
 import { Strategy } from "./strategy";
 import { emptySnapshot } from "./types";
 import type { Signal } from "./types";
 import type { ChainConfig } from "../services/config";
+import type { EvmWalletService } from "../services/wallet";
 
 const chain: ChainConfig = {
   key: "ARC",
@@ -301,6 +302,101 @@ describe("TradingEngine time-stop", () => {
     expect(close).toContain("STOP CLOSE");
   });
 
+  test("paper Arc sell folds gas into realized PnL without double counting", async () => {
+    const dir = `/tmp/opencode/engine-acct-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * 10n ** 18n,
+      initialNativeRaw: 100n * 10n ** 18n,
+    });
+
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 25,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        maxDailyLossPct: 0,
+        baseUsdRate: 1,
+        // 9 USDC min proceeds, 1 USDC quoted gas → 2 USDC swap+approval.
+        quoteFn: async () => ({
+          fromTokenAmount: 1000n,
+          toTokenAmount: 9n * 10n ** 18n,
+          toTokenAmountMin: 9n * 10n ** 18n,
+          fees: [{ type: "network", amount: 10n ** 18n, token: "USDC" }],
+          priceImpact: undefined,
+        }),
+      },
+      undefined,
+      async () => undefined,
+    );
+
+    const openedAt = Date.now() - 60_000;
+    await store.update((state) => {
+      state.positions["0xtoken"] = {
+        tokenAddress: "0xtoken",
+        symbol: "DUMP",
+        name: "Dump Token",
+        decimals: 18,
+        quantityRaw: "1000",
+        initialQuantityRaw: "1000",
+        costBaseRaw: (10n * 10n ** 18n).toString(),
+        realizedPnlBaseRaw: "0",
+        entryPriceUsd: 100,
+        currentPriceUsd: 100,
+        highestPriceUsd: 100,
+        feesNativeRaw: "0",
+        takeProfitIndex: 0,
+        trailingActivated: false,
+        openedAt,
+        lastActionAt: openedAt,
+        pairAddress: "0xpair",
+        dex: "argus",
+        quoteSymbol: "USDC",
+        liquidityUsd: 50000,
+        snapshot: emptySnapshot(),
+        source: "debot-dashboard",
+      };
+    });
+
+    await engine.onPrice({
+      tokenAddress: "0xtoken",
+      symbol: "DUMP",
+      pairAddress: "0xpair",
+      dexId: "argus",
+      quoteSymbol: "USDC",
+      priceUsd: 70,
+      priceNative: null,
+      liquidityUsd: null,
+    });
+
+    // Net proceeds 9 − 2 gas = 7 against cost 10 → realized −3.
+    expect(store.data.realizedPnlBaseRaw).toBe((-3n * 10n ** 18n).toString());
+    expect(store.data.networkFeesNativeRaw).toBe((2n * 10n ** 18n).toString());
+    expect(store.data.balanceBaseRaw).toBe((107n * 10n ** 18n).toString());
+
+    // getStats must agree: gas already inside realized, so net adds no extra
+    // Arc gas term, and equity equals the wallet balance with no open slots.
+    const stats = engine.getStats();
+    expect(stats.realizedPnlBase).toBeCloseTo(-3, 9);
+    expect(stats.unrealizedPnlBase).toBeCloseTo(0, 9);
+    expect(stats.networkFeesNative).toBeCloseTo(2, 9);
+    expect(stats.netPnlBase).toBeCloseTo(-3, 9);
+    expect(stats.equityBase).toBeCloseTo(107, 9);
+    expect(stats.balanceBase).toBeCloseTo(107, 9);
+  });
+});
+
   test("paper buy takes min quantity and native-chain gas only", async () => {
     const dir = `/tmp/opencode/engine-buyfill-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const store = await createStateStore({
@@ -361,7 +457,6 @@ describe("TradingEngine time-stop", () => {
     expect(store.data.balanceBaseRaw).toBe((89n * 10n ** 18n).toString());
     expect(position?.costBaseRaw).toBe((11n * 10n ** 18n).toString());
   });
-});
 
 describe("TradingEngine entry snapshot gate", () => {
   function gatedChain(overrides: Partial<ChainConfig> = {}): ChainConfig {
@@ -587,5 +682,128 @@ describe("TradingEngine daily loss halt", () => {
     expect(await engine.onSignal(buySignal())).toBe(false);
     expect(quotes).toBe(0);
     expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
+});
+
+describe("TradingEngine live submission journal", () => {
+  const ONE = 10n ** 18n;
+
+  function liveSignal(): Signal {
+    return {
+      tokenAddress: "0xlive",
+      symbol: "LIVE",
+      name: "Live Token Full Name",
+      decimals: 18,
+      pairAddress: "0xpair",
+      priceUsd: 1,
+      dex: "argus",
+      quoteSymbol: "USDC",
+      liquidityUsd: 50000,
+      snapshot: emptySnapshot(),
+      source: "debot-dashboard",
+    };
+  }
+
+  function liveStrategy() {
+    return new Strategy({
+      takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+      trailingActivationPercent: 25,
+      trailingDistancePercent: 10,
+      maxHoldMs: 3_600_000,
+      stopLossPercent: 25,
+    });
+  }
+
+  function liveConfig(quoteFee: bigint): TradingEngineConfig {
+    return {
+      chain,
+      mode: "live" as const,
+      buyAmountBaseRaw: 10n * ONE,
+      maxOpenPositions: 3,
+      maxDailyLossPct: 0,
+      baseUsdRate: 1,
+      quoteFn: async () => ({
+        fromTokenAmount: 10n * ONE,
+        toTokenAmount: 500n * ONE,
+        toTokenAmountMin: 495n * ONE,
+        fees: [{ type: "network", amount: quoteFee, token: "USDC" }],
+        priceImpact: undefined,
+      }),
+    };
+  }
+
+  async function liveStore() {
+    const dir = `/tmp/opencode/engine-live-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    return createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "live",
+      chain: "Arc",
+      initialBaseRaw: 100n * ONE,
+      initialNativeRaw: 100n * ONE,
+    });
+  }
+
+  test("thrown submission retains an UNKNOWN record for manual review", async () => {
+    const store = await liveStore();
+    let balanceCalls = 0;
+    const wallet = {
+      getTokenBalance: async () => 0n,
+      getBalances: async () => {
+        balanceCalls += 1;
+        // Second read (post-failure) shows 1 USDC of native gas consumed.
+        const native = balanceCalls === 1 ? 100n * ONE : 99n * ONE;
+        return { baseRaw: 100n * ONE, nativeRaw: native };
+      },
+      submitSwap: async () => {
+        throw new Error("transport reset by peer");
+      },
+    } as unknown as EvmWalletService;
+    const messages: string[] = [];
+    const engine = new TradingEngine(
+      store, liveStrategy(), liveConfig(0n),
+      wallet, async (m) => { messages.push(m); },
+    );
+
+    await expect(engine.onSignal(liveSignal())).rejects.toThrow("transport reset");
+    const records = Object.values(store.data.pendingSwaps);
+    expect(records).toHaveLength(1);
+    expect(records[0]?.stage).toBe("UNKNOWN");
+    expect(records[0]?.hash).toBe("");
+    // Observed 1 USDC gas loss is recorded and charged to realized (Arc).
+    expect(store.data.networkFeesNativeRaw).toBe(ONE.toString());
+    expect(store.data.realizedPnlBaseRaw).toBe((-ONE).toString());
+    expect(messages.some((m) => m.includes("UNKNOWN") || m.includes("unknown"))).toBe(true);
+  });
+
+  test("successful submission settles with full entry metadata", async () => {
+    const store = await liveStore();
+    let tokenCalls = 0;
+    const wallet = {
+      getTokenBalance: async () => (tokenCalls++ === 0 ? 0n : 500n * ONE),
+      getBalances: async () => ({ baseRaw: 90n * ONE, nativeRaw: 90n * ONE }),
+      submitSwap: async () => ({ id: "5042:0xhash", hash: "0xhash" }),
+      waitForSwap: async () => ({ status: "completed" }),
+    } as unknown as EvmWalletService;
+    const engine = new TradingEngine(
+      store, liveStrategy(), liveConfig(ONE),
+      wallet, async () => undefined,
+    );
+
+    // Seed pre-submission balances at 100 so the observed 10 USDC delta
+    // becomes the position cost.
+    await store.update((state) => {
+      state.balanceBaseRaw = (100n * ONE).toString();
+      state.balanceNativeRaw = (100n * ONE).toString();
+    });
+    // Note: stub getBalances always returns 90, so `before` reads 90 and the
+    // observed spend is 0 → cost falls back to the requested 10 USDC.
+    expect(await engine.onSignal(liveSignal())).toBe(true);
+    expect(Object.keys(store.data.pendingSwaps)).toHaveLength(0);
+    const position = store.data.positions["0xlive"];
+    expect(position?.quantityRaw).toBe((500n * ONE).toString());
+    expect(position?.name).toBe("Live Token Full Name");
+    expect(position?.liquidityUsd).toBe(50000);
+    expect(position?.costBaseRaw).toBe((10n * ONE).toString());
+    expect(store.data.entries).toBe(1);
   });
 });

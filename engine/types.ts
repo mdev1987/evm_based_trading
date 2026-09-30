@@ -126,6 +126,8 @@ export type PendingSwap = {
   side: "BUY" | "SELL";
   tokenAddress: string;
   symbol: string;
+  /** Full token name; falls back to the symbol for legacy journal entries. */
+  tokenName: string;
   decimals: number;
   reason: string;
   requestedAmountRaw: string;
@@ -143,6 +145,16 @@ export type PendingSwap = {
   snapshot: EntrySnapshot;
   /** Feed that opened the position; "unknown" for legacy journal entries. */
   source: string;
+  /** Entry-time liquidity; null when the feed did not report it. */
+  entryLiquidityUsd: number | null;
+  /**
+   * Journal stage for crash-window recovery. PREPARED is written before the
+   * wallet submission returns; SUBMITTED carries a real on-chain id; UNKNOWN
+   * means the submission threw and the tx may or may not have broadcast.
+   */
+  stage: "PREPARED" | "SUBMITTED" | "UNKNOWN";
+  /** Whether an UNKNOWN/PREPARED record was already flagged for manual review. */
+  reviewNotified: boolean;
 };
 
 export type WalletState = {

@@ -178,6 +178,26 @@ export class TradingEngine {
     return [...tokens];
   }
 
+  /**
+   * Signal-pair pinning for deterministic price selection (token → pair).
+   * Positions pin to the pair that generated the signal; pending swaps fill
+   * gaps. DexScreener otherwise returns every pair per token and exit triggers
+   * could evaluate on a different pool each poll.
+   */
+  getPricePreferences(): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const position of Object.values(this.store.data.positions)) {
+      if (position.pairAddress) {
+        map.set(position.tokenAddress.toLowerCase(), position.pairAddress);
+      }
+    }
+    for (const pending of Object.values(this.store.data.pendingSwaps)) {
+      const key = pending.tokenAddress.toLowerCase();
+      if (pending.pairAddress && !map.has(key)) map.set(key, pending.pairAddress);
+    }
+    return map;
+  }
+
   /** Return whether a live transaction is already pending for a token. */
   /** DuckDB analytical mirror; null when history is disabled (fail-open). */
   private history(): HistoryService | null {
@@ -319,6 +339,13 @@ export class TradingEngine {
 
       const pending = Object.values(this.store.data.pendingSwaps);
       for (const swap of pending) {
+        // PREPARED/UNKNOWN records carry no on-chain id (the submission result
+        // never arrived), so there is nothing pollable — flag once for manual
+        // review and keep the record blocking re-entry on that token.
+        if (swap.stage !== "SUBMITTED") {
+          await this.flagUnresolvedSubmission(swap);
+          continue;
+        }
         try {
           const status = await this.wallet.getSwapStatus(this.config.chain, swap.id);
           if (status.status === "pending") continue;
@@ -330,6 +357,34 @@ export class TradingEngine {
           );
         }
       }
+    });
+  }
+
+  /** Flag a journal record that can never resolve on-chain, exactly once. */
+  private async flagUnresolvedSubmission(swap: PendingSwap): Promise<void> {
+    if (swap.reviewNotified) return;
+    console.error(
+      `[ENGINE][${this.config.chain.name}] ${swap.symbol} ${swap.side} submission ${swap.stage}: no on-chain id — manual explorer review required`,
+    );
+    await this.notify(
+      buildPlumbingMessage({
+        chain: this.config.chain,
+        mode: "live",
+        kind: "FAILED",
+        symbol: swap.symbol,
+        tokenAddress: swap.tokenAddress,
+        pairAddress: swap.pairAddress,
+        dex: swap.dex || "unknown",
+        reason: `${swap.side} SUBMISSION ${swap.stage}`,
+        amountLabel: `Journal ${swap.id} | submitted ${new Date(swap.submittedAt).toISOString()}`,
+        txHash: swap.hash || swap.id,
+        explorerUrl: this.config.chain.explorerUrl,
+        note: "No terminal status can be polled. Verify on the explorer and resolve manually; re-entry stays blocked.",
+      }),
+    );
+    await this.store.update((state) => {
+      const record = state.pendingSwaps[swap.id];
+      if (record) record.reviewNotified = true;
     });
   }
 
@@ -818,6 +873,39 @@ export class TradingEngine {
       signal.tokenAddress,
     );
 
+    // Write-ahead journal: a PREPARED record hits disk before the wallet
+    // submission returns, so a crash between broadcast and result still
+    // leaves a recoverable trace (previously that window was unrecorded).
+    const submittedAt = Date.now();
+    const preparedId = `prepared-buy-${key}-${submittedAt}`;
+    const prepared: PendingSwap = {
+      id: preparedId,
+      hash: "",
+      side: "BUY",
+      tokenAddress: signal.tokenAddress,
+      symbol: signal.symbol,
+      tokenName: signal.name || signal.symbol,
+      decimals: signal.decimals,
+      reason: "ENTRY",
+      requestedAmountRaw: this.config.buyAmountBaseRaw.toString(),
+      signalPriceUsd: signal.priceUsd,
+      beforeBaseRaw: before.baseRaw.toString(),
+      beforeNativeRaw: before.nativeRaw.toString(),
+      beforeTokenRaw: tokenBefore.toString(),
+      estimatedNetworkFeeRaw: estimatedNetworkFee.toString(),
+      submittedAt,
+      pairAddress: signal.pairAddress,
+      dex: signal.dex || "unknown",
+      snapshot: { ...signal.snapshot },
+      source: signal.source,
+      entryLiquidityUsd: signal.liquidityUsd,
+      stage: "PREPARED",
+      reviewNotified: false,
+    };
+    await this.store.update((state) => {
+      state.pendingSwaps[prepared.id] = prepared;
+    });
+
     let result;
     try {
       result = await this.wallet.submitSwap(this.config.chain, {
@@ -829,8 +917,27 @@ export class TradingEngine {
       const after = await this.wallet.getBalances(this.config.chain).catch(() => before);
       // A failed submission has no confirmed trade amount to subtract; any
       // observed native-balance loss is therefore treated as submission gas.
+      // The submission itself may still have broadcast before the transport
+      // failed, so the record is retained as UNKNOWN for manual review
+      // instead of being dropped.
       const networkFee = this.measureObservedNativeFeeForFailure(before, after, 0n);
-      await this.recordFailedLiveGas(networkFee, after);
+      await this.recordFailedLiveGas(networkFee, after, prepared.id, true);
+      await this.notify(
+        buildPlumbingMessage({
+          chain: this.config.chain,
+          mode: "live",
+          kind: "FAILED",
+          symbol: signal.symbol,
+          tokenAddress: signal.tokenAddress,
+          pairAddress: signal.pairAddress,
+          dex: signal.dex || "unknown",
+          reason: "BUY SUBMISSION",
+          amountLabel: `Submission outcome unknown | Gas: ${formatUnits(networkFee, this.config.chain.nativeDecimals)} ${this.config.chain.nativeSymbol}`,
+          txHash: prepared.id,
+          explorerUrl: this.config.chain.explorerUrl,
+          note: "No on-chain id was returned; verify on the explorer. Re-entry stays blocked.",
+        }),
+      );
       throw error;
     }
 
@@ -842,6 +949,7 @@ export class TradingEngine {
       side: "BUY",
       tokenAddress: signal.tokenAddress,
       symbol: signal.symbol,
+      tokenName: signal.name || signal.symbol,
       decimals: signal.decimals,
       reason: "ENTRY",
       requestedAmountRaw: this.config.buyAmountBaseRaw.toString(),
@@ -850,14 +958,18 @@ export class TradingEngine {
       beforeNativeRaw: before.nativeRaw.toString(),
       beforeTokenRaw: tokenBefore.toString(),
       estimatedNetworkFeeRaw: estimatedNetworkFee.toString(),
-      submittedAt: Date.now(),
+      submittedAt,
       pairAddress: signal.pairAddress,
       dex: signal.dex || "unknown",
       snapshot: { ...signal.snapshot },
       source: signal.source,
+      entryLiquidityUsd: signal.liquidityUsd,
+      stage: "SUBMITTED",
+      reviewNotified: false,
     };
 
     await this.store.update((state) => {
+      delete state.pendingSwaps[prepared.id];
       state.pendingSwaps[pending.id] = pending;
       state.balanceBaseRaw = before.baseRaw.toString();
       state.balanceNativeRaw = before.nativeRaw.toString();
@@ -1025,14 +1137,20 @@ export class TradingEngine {
     const currentQuantity = toBigInt(position.quantityRaw, "position.quantityRaw");
     const currentCost = toBigInt(position.costBaseRaw, "position.costBaseRaw");
     const costSold = (currentCost * requestedQuantity) / currentQuantity;
-    const realizedPnl = proceeds - costSold;
+    // Native-base chains (Arc): gas leaves the same balance the proceeds land
+    // in, so realized PnL must be net of gas to match the wallet-equity delta
+    // (this is also exactly how live settles, via observed wallet deltas).
+    // ERC-20-base gas stays out of realized: getStats() converts and subtracts
+    // it separately, so folding it in here would double-count.
+    const netProceeds = this.config.chain.baseIsNative ? proceeds - executionFee : proceeds;
+    const realizedPnl = netProceeds - costSold;
 
     const remainingQuantity = currentQuantity - requestedQuantity;
     const remainingCost = currentCost - costSold;
     const key = position.tokenAddress.toLowerCase();
 
     const afterBase = this.config.chain.baseIsNative
-      ? before.baseRaw + proceeds - executionFee
+      ? before.baseRaw + netProceeds
       : before.baseRaw + proceeds;
     const afterNative = this.config.chain.baseIsNative
       ? afterBase
@@ -1107,6 +1225,36 @@ export class TradingEngine {
       position.tokenAddress,
     );
 
+    const submittedAt = Date.now();
+    const preparedId = `prepared-sell-${position.tokenAddress.toLowerCase()}-${submittedAt}`;
+    const prepared: PendingSwap = {
+      id: preparedId,
+      hash: "",
+      side: "SELL",
+      tokenAddress: position.tokenAddress,
+      symbol: position.symbol,
+      tokenName: position.name || position.symbol,
+      decimals: position.decimals,
+      reason,
+      requestedAmountRaw: requestedQuantity.toString(),
+      signalPriceUsd: position.currentPriceUsd,
+      beforeBaseRaw: before.baseRaw.toString(),
+      beforeNativeRaw: before.nativeRaw.toString(),
+      beforeTokenRaw: tokenBefore.toString(),
+      estimatedNetworkFeeRaw: estimatedNetworkFee.toString(),
+      submittedAt,
+      pairAddress: position.pairAddress,
+      dex: position.dex || "unknown",
+      snapshot: { ...position.snapshot },
+      source: position.source,
+      entryLiquidityUsd: position.liquidityUsd,
+      stage: "PREPARED",
+      reviewNotified: false,
+    };
+    await this.store.update((state) => {
+      state.pendingSwaps[prepared.id] = prepared;
+    });
+
     let result;
     try {
       result = await this.wallet.submitSwap(this.config.chain, {
@@ -1117,8 +1265,25 @@ export class TradingEngine {
     } catch (error) {
       const after = await this.wallet.getBalances(this.config.chain).catch(() => before);
       // No transaction result means no confirmed gas usage; do not invent a fee.
+      // The broadcast itself may still have happened, so retain as UNKNOWN.
       const networkFee = this.measureObservedNativeFeeForSell(before, after, 0n);
-      await this.recordFailedLiveGas(networkFee, after);
+      await this.recordFailedLiveGas(networkFee, after, prepared.id, true);
+      await this.notify(
+        buildPlumbingMessage({
+          chain: this.config.chain,
+          mode: "live",
+          kind: "FAILED",
+          symbol: position.symbol,
+          tokenAddress: position.tokenAddress,
+          pairAddress: position.pairAddress,
+          dex: position.dex || "unknown",
+          reason: `${reason} SELL SUBMISSION`,
+          amountLabel: `Submission outcome unknown | Gas: ${formatUnits(networkFee, this.config.chain.nativeDecimals)} ${this.config.chain.nativeSymbol}`,
+          txHash: prepared.id,
+          explorerUrl: this.config.chain.explorerUrl,
+          note: "No on-chain id was returned; verify on the explorer. Re-entry stays blocked.",
+        }),
+      );
       throw error;
     }
 
@@ -1128,6 +1293,7 @@ export class TradingEngine {
       side: "SELL",
       tokenAddress: position.tokenAddress,
       symbol: position.symbol,
+      tokenName: position.name || position.symbol,
       decimals: position.decimals,
       reason,
       requestedAmountRaw: requestedQuantity.toString(),
@@ -1136,14 +1302,18 @@ export class TradingEngine {
       beforeNativeRaw: before.nativeRaw.toString(),
       beforeTokenRaw: tokenBefore.toString(),
       estimatedNetworkFeeRaw: estimatedNetworkFee.toString(),
-      submittedAt: Date.now(),
+      submittedAt,
       pairAddress: position.pairAddress,
       dex: position.dex || "unknown",
       snapshot: { ...position.snapshot },
       source: position.source,
+      entryLiquidityUsd: position.liquidityUsd,
+      stage: "SUBMITTED",
+      reviewNotified: false,
     };
 
     await this.store.update((state) => {
+      delete state.pendingSwaps[prepared.id];
       state.pendingSwaps[pending.id] = pending;
       state.balanceBaseRaw = before.baseRaw.toString();
       state.balanceNativeRaw = before.nativeRaw.toString();
@@ -1276,7 +1446,7 @@ export class TradingEngine {
       const position: Position = {
         tokenAddress: pending.tokenAddress,
         symbol: pending.symbol,
-        name: pending.symbol,
+        name: pending.tokenName || pending.symbol,
         decimals: pending.decimals,
         quantityRaw: quantity.toString(),
         initialQuantityRaw: quantity.toString(),
@@ -1293,7 +1463,7 @@ export class TradingEngine {
         pairAddress: pending.pairAddress,
         dex: pending.dex || "unknown",
         quoteSymbol: this.config.chain.baseSymbol,
-        liquidityUsd: null,
+        liquidityUsd: pending.entryLiquidityUsd,
         snapshot: pending.snapshot ?? emptySnapshot(),
         source: pending.source || "unknown",
       };
@@ -1594,6 +1764,7 @@ export class TradingEngine {
     networkFee: bigint,
     after: { baseRaw: bigint; nativeRaw: bigint },
     pendingId?: string,
+    markUnknown = false,
   ): Promise<void> {
     await this.store.update((state) => {
       state.balanceBaseRaw = after.baseRaw.toString();
@@ -1609,7 +1780,19 @@ export class TradingEngine {
           toSignedBigInt(state.realizedPnlBaseRaw, "realizedPnlBaseRaw") - networkFee
         ).toString();
       }
-      if (pendingId) delete state.pendingSwaps[pendingId];
+      if (pendingId) {
+        if (markUnknown) {
+          // The broadcast may still have happened: retain the record as
+          // UNKNOWN for manual review instead of dropping the window.
+          const record = state.pendingSwaps[pendingId];
+          if (record) {
+            record.stage = "UNKNOWN";
+            record.reviewNotified = false;
+          }
+        } else {
+          delete state.pendingSwaps[pendingId];
+        }
+      }
       state.lastWalletSyncAt = Date.now();
     });
   }

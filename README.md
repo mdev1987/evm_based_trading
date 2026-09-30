@@ -441,7 +441,9 @@ For native-base chains such as Arc, realized PnL uses the actual base-wallet del
 ## Scope deliberately excluded from v2.0.0
 
 - Automatic candidate filtering beyond accepting Debot Rank signals.
-- Historical research database.
+- Historical market-data/research warehouse (the bot does keep a trade/exit/skip
+  analytics database in `.data/history.duckdb` plus log-backfill scripts;
+  raw market-data archiving is what's excluded).
 - Wallet/KOL labeling.
 - Prometheus/Grafana.
 - Web UI.
