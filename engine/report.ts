@@ -279,7 +279,9 @@ export function buildExitMessage(input: ExitReportInput): string {
   const title = input.closed
     ? input.reason === "TRAIL"
       ? `🛡️ **TRAIL CLOSE — ${input.symbol}**`
-      : `🔵 **CLOSE — ${input.symbol}**`
+      : input.reason === "STOP"
+        ? `🛑 **STOP CLOSE — ${input.symbol}**`
+        : `🔵 **CLOSE — ${input.symbol}**`
     : `🟡 **PARTIAL TP — ${input.symbol}**`;
   const outcome = input.closed ? (closedNegative ? "❌ LOSS" : "✅ WIN") : pnlNegative ? "➖" : "➕";
 

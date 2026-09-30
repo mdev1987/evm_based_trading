@@ -11,6 +11,8 @@ export type StrategyConfig = {
   trailingDistancePercent: number;
   /** Maximum hold time in ms; 0 disables the time-stop exit. */
   maxHoldMs: number;
+  /** Full-exit loss threshold in percent (e.g. 25 = exit at −25%); 0 disables. */
+  stopLossPercent: number;
 };
 
 export type StrategyAction =
@@ -18,6 +20,7 @@ export type StrategyAction =
   | { type: "TP"; sellPercent: number }
   | { type: "TRAIL" }
   | { type: "TIME" }
+  | { type: "STOP" }
   | { type: "HOLD" };
 
 /** Pure strategy implementation: signal acceptance plus TP/trailing exits. */
@@ -63,6 +66,13 @@ export class Strategy {
     const takeProfit = this.config.takeProfits[position.takeProfitIndex];
     if (takeProfit && gainPercent >= takeProfit.gainPercent) {
       return { type: "TP", sellPercent: takeProfit.sellPercent };
+    }
+
+    if (
+      this.config.stopLossPercent > 0 &&
+      gainPercent <= -this.config.stopLossPercent
+    ) {
+      return { type: "STOP" };
     }
 
     if (position.trailingActivated && position.highestPriceUsd > 0) {

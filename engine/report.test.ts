@@ -171,6 +171,42 @@ describe("report formatting", () => {
     expect(message).toContain("0xabc");
   });
 
+  test("stop close shows stop title and reason", () => {
+    const message = buildExitMessage({
+      chain,
+      mode: "paper",
+      closed: true,
+      reason: "STOP",
+      tokenName: "Troll",
+      symbol: "TROLL",
+      tokenAddress: "0x2a13008cc2f5a853f6fb21cbd90841806c64b247",
+      pairAddress: "",
+      dex: "unknown",
+      quoteSymbol: "WETH",
+      liquidityUsd: null,
+      entryPriceUsd: 0.001,
+      exitPriceUsd: 0.0007,
+      highestPriceUsd: 0.001,
+      sellPercent: 100,
+      proceedsBaseRaw: 70000000000000000n,
+      realizedPnlBaseRaw: -30000000000000000n,
+      totalPositionPnlBaseRaw: -30000000000000000n,
+      remainingQuantityRaw: 0n,
+      remainingQuantityDecimals: 18,
+      remainingCostBaseRaw: 0n,
+      networkFeeRaw: 8000000000000000n,
+      before,
+      after,
+      openedAt: Date.now() - 90_000,
+      closedAt: Date.now(),
+      stats,
+    });
+
+    expect(message).toContain("STOP CLOSE");
+    expect(message).toContain("Reason: STOP");
+    expect(message).toContain("LOSS");
+  });
+
   test("trailing message shows stop and activation", () => {
     const message = buildTrailingMessage({
       chain,

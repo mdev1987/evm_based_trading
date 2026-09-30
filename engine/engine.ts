@@ -506,6 +506,10 @@ export class TradingEngine {
         await this.sellAll(position, "TRAIL");
         return;
       }
+      if (action.type === "STOP") {
+        await this.sellAll(position, "STOP");
+        return;
+      }
       if (action.type === "TIME") {
         await this.closeExpired(position);
         return;

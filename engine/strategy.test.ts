@@ -11,6 +11,7 @@ const strategy = new Strategy({
   trailingActivationPercent: 30,
   trailingDistancePercent: 10,
   maxHoldMs: 86_400_000,
+  stopLossPercent: 25,
 });
 
 function position(overrides: Partial<Position> = {}): Position {
@@ -112,10 +113,41 @@ describe("Strategy", () => {
       trailingActivationPercent: 30,
       trailingDistancePercent: 10,
       maxHoldMs: 0,
+      stopLossPercent: 25,
     });
     const now = Date.now();
     expect(
       noTime.evaluatePosition(position({ openedAt: now - 90_000_000 }), now),
+    ).toEqual({ type: "HOLD" });
+  });
+
+  test("stop-losses a −25% position", () => {
+    expect(strategy.evaluatePosition(position({ currentPriceUsd: 75 }))).toEqual({
+      type: "STOP",
+    });
+  });
+
+  test("stop-loss wins over an expired hold", () => {
+    const now = Date.now();
+    expect(
+      strategy.evaluatePosition(
+        position({ currentPriceUsd: 70, openedAt: now - 90_000_000 }),
+        now,
+      ),
+    ).toEqual({ type: "STOP" });
+  });
+
+  test("stop-loss disabled at zero", () => {
+    const noStop = new Strategy({
+      takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+      trailingActivationPercent: 30,
+      trailingDistancePercent: 10,
+      maxHoldMs: 86_400_000,
+      stopLossPercent: 0,
+    });
+    const now = Date.now();
+    expect(
+      noStop.evaluatePosition(position({ currentPriceUsd: 50, openedAt: now - 1_000 }), now),
     ).toEqual({ type: "HOLD" });
   });
 });

@@ -500,6 +500,9 @@ async function main(): Promise<void> {
   console.log(
     `Trail  : ${config.strategy.trailingActivationPercent}% activation / ${config.strategy.trailingDistancePercent}% distance`,
   );
+  console.log(
+    `Stop   : ${config.strategy.stopLossPercent > 0 ? `-${config.strategy.stopLossPercent}%` : "disabled"}`,
+  );
 
   const telegram = new TelegramService(config.telegram);
   await telegram.verify();
@@ -551,6 +554,9 @@ async function main(): Promise<void> {
       trailingSummary:
         `+${config.strategy.trailingActivationPercent}% activation / ` +
         `-${config.strategy.trailingDistancePercent}% distance`,
+      stopSummary: config.strategy.stopLossPercent > 0
+        ? `-${config.strategy.stopLossPercent}%`
+        : "disabled",
     });
 
     let statusRunning = false;

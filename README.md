@@ -178,6 +178,7 @@ The strategy is entirely environment-driven:
 TAKE_PROFIT_LEVELS=25:50,50:100
 TRAILING_ACTIVATION_PERCENT=30
 TRAILING_DISTANCE_PERCENT=10
+STOP_LOSS_PERCENT=25
 ```
 
 This means:
@@ -186,6 +187,7 @@ This means:
 - +50%: sell the remaining position.
 - +30%: trailing stop becomes active.
 - Trailing distance: 10% below the highest observed price.
+- −25%: hard stop-loss, full exit via the 0x sell-quote path.
 
 The values are examples/defaults, not a performance claim.
 

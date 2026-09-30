@@ -15,6 +15,7 @@ export type StartupInfo = {
   maxOpenPositions: number;
   takeProfitSummary: string;
   trailingSummary: string;
+  stopSummary: string;
 };
 
 /** Context shown on the shutdown banner. */
@@ -89,6 +90,7 @@ export class TelegramService {
       `💵 Buy: ${info.buyAmountBase} | 📦 Max positions: ${info.maxOpenPositions}\n` +
       `🎯 TP: ${info.takeProfitSummary}\n` +
       `🛡️ Trailing: ${info.trailingSummary}\n` +
+      `🛑 Stop: ${info.stopSummary}\n` +
       `🕒 Started: ${utcNow()}`,
     );
   }

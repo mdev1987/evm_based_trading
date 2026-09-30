@@ -51,6 +51,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
         maxHoldMs: 1000,
+        stopLossPercent: 25,
       }),
       {
         chain,
@@ -142,6 +143,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
         maxHoldMs: 1000,
+        stopLossPercent: 25,
       }),
       {
         chain,
@@ -207,6 +209,95 @@ describe("TradingEngine time-stop", () => {
     expect(store.data.networkFeesNativeRaw).toBe((2n * 10n ** 18n).toString());
   });
 
+  test("stop-loss exits a −30% position through the quote path", async () => {
+    const dir = `/tmp/opencode/engine-stop-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * 10n ** 18n,
+      initialNativeRaw: 100n * 10n ** 18n,
+    });
+
+    const messages: string[] = [];
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 30,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        baseUsdRate: 1,
+        quoteFn: async () => ({
+          fromTokenAmount: 1000n,
+          toTokenAmount: 7n * 10n ** 18n,
+          toTokenAmountMin: 7n * 10n ** 18n,
+          fees: [],
+          priceImpact: undefined,
+        }),
+      },
+      undefined,
+      async (message) => {
+        messages.push(message);
+      },
+    );
+
+    // Fresh position (no TIME trigger), down 30% past the −25% stop.
+    const openedAt = Date.now() - 60_000;
+    await store.update((state) => {
+      state.positions["0xtoken"] = {
+        tokenAddress: "0xtoken",
+        symbol: "DUMP",
+        name: "Dump Token",
+        decimals: 18,
+        quantityRaw: "1000",
+        initialQuantityRaw: "1000",
+        costBaseRaw: (10n * 10n ** 18n).toString(),
+        realizedPnlBaseRaw: "0",
+        entryPriceUsd: 100,
+        currentPriceUsd: 100,
+        highestPriceUsd: 100,
+        feesNativeRaw: "0",
+        takeProfitIndex: 0,
+        trailingActivated: false,
+        openedAt,
+        lastActionAt: openedAt,
+        pairAddress: "0xpair",
+        dex: "argus",
+        quoteSymbol: "USDC",
+        liquidityUsd: 50000,
+        snapshot: emptySnapshot(),
+        source: "debot-dashboard",
+      };
+    });
+
+    await engine.onPrice({
+      tokenAddress: "0xtoken",
+      symbol: "DUMP",
+      pairAddress: "0xpair",
+      dexId: "argus",
+      quoteSymbol: "USDC",
+      priceUsd: 70,
+      priceNative: null,
+      liquidityUsd: null,
+    });
+
+    expect(store.data.positions["0xtoken"]).toBeUndefined();
+    expect(store.data.losses).toBe(1);
+    // 100 + 7 proceeds − 0 gas = 107.
+    expect(store.data.balanceBaseRaw).toBe((107n * 10n ** 18n).toString());
+    const close = messages.find((m) => m.includes("STOP"));
+    expect(close).toBeDefined();
+    expect(close).toContain("STOP CLOSE");
+  });
+
   test("paper buy takes min quantity and native-chain gas only", async () => {
     const dir = `/tmp/opencode/engine-buyfill-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
     const store = await createStateStore({
@@ -224,6 +315,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
         maxHoldMs: 60_000,
+        stopLossPercent: 25,
       }),
       {
         chain,
@@ -309,6 +401,7 @@ describe("TradingEngine entry snapshot gate", () => {
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
         maxHoldMs: 1000,
+        stopLossPercent: 25,
       }),
       { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, baseUsdRate: 1 },
       undefined,
