@@ -92,12 +92,15 @@ export function nativeUsdHint(
 }
 
 function usdHintForUnits(units: number, rate: number): string {
+  // NOTE: never use "~" here — Telegram MarkdownV2 renders ~text~ as
+  // strikethrough, so paired "(~$..)" hints put a line through everything
+  // between them. "≈" carries the same meaning with no markup side effect.
   const usd = units * rate;
   if (!Number.isFinite(usd)) return "";
-  if (usd >= 1000) return ` (~$${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })})`;
-  if (usd >= 0.01) return ` (~$${usd.toFixed(2)})`;
-  if (usd > 0) return ` (~$${usd.toPrecision(2)})`;
-  return " (~$0.00)";
+  if (usd >= 1000) return ` (≈$${usd.toLocaleString("en-US", { maximumFractionDigits: 2 })})`;
+  if (usd >= 0.01) return ` (≈$${usd.toFixed(2)})`;
+  if (usd > 0) return ` (≈$${usd.toPrecision(2)})`;
+  return " (≈$0.00)";
 }
 
 /** Human label for a signal feed id. */
@@ -142,46 +145,39 @@ function nativeAmount(raw: bigint, chain: ChainConfig): string {
   return `${formatUnits(raw, chain.nativeDecimals)} ${chain.nativeSymbol}`;
 }
 
-function identityLines(
+function identityLine(
   tokenName: string,
   symbol: string,
-  tokenAddress: string,
-  pairAddress: string,
   dex: string,
   quoteSymbol: string,
   liquidityUsd: number | null,
+  source?: string | null,
 ): string {
-  const lines = [
-    `🪙 Token: ${tokenName} (${symbol})`,
-    `📝 CA: \`${tokenAddress}\``,
-  ];
-  lines.push(pairAddress ? `🏊 Pair/LP: \`${pairAddress}\`` : `🏊 Pair/LP: N/A`);
-  const quote = quoteSymbol ? ` / ${quoteSymbol}` : "";
-  lines.push(`🏦 DEX: ${dex}${quote} | 💧 Liq: ${formatLiquidity(liquidityUsd)}`);
-  return lines.join("\n");
+  const quote = quoteSymbol ? `/${quoteSymbol}` : "";
+  const base = `🪙 ${tokenName} (${symbol}) · ${dex}${quote} · 💧 ${formatLiquidity(liquidityUsd)}`;
+  return source === undefined ? base : `${base} · 📡 Source: ${formatSource(source)}`;
 }
 
-function balanceLines(
+function addressLine(tokenAddress: string, pairAddress: string): string {
+  return pairAddress
+    ? `📝 CA: \`${tokenAddress}\` · 🏊 LP: \`${pairAddress}\``
+    : `📝 CA: \`${tokenAddress}\` · 🏊 LP: N/A`;
+}
+
+function balanceLine(
   chain: ChainConfig,
   before: BalanceSnapshot,
   after: BalanceSnapshot,
   baseUsdRate?: number | null,
 ): string {
   return (
-    `💼 Base balance: ${baseAmount(before.baseRaw, chain)} → ${baseAmount(after.baseRaw, chain)}${baseUsdHint(after.baseRaw, chain, baseUsdRate)}\n` +
-    `⛽ Native balance: ${nativeAmount(before.nativeRaw, chain)} → ${nativeAmount(after.nativeRaw, chain)}${nativeUsdHint(after.nativeRaw, chain, baseUsdRate)}`
+    `💼 ${baseAmount(before.baseRaw, chain)} → ${baseAmount(after.baseRaw, chain)}${baseUsdHint(after.baseRaw, chain, baseUsdRate)}` +
+    ` · ⛽ ${nativeAmount(before.nativeRaw, chain)} → ${nativeAmount(after.nativeRaw, chain)}${nativeUsdHint(after.nativeRaw, chain, baseUsdRate)}`
   );
 }
 
-function winRateLines(stats: WinRateSnapshot): string {
-  return (
-    `📊 Win rate: ${formatWinRate(stats)}\n` +
-    `🧾 Entries: ${stats.entries} | Open: ${stats.openPositions}`
-  );
-}
-
-function modeLine(mode: TradingMode): string {
-  return `⚙️ Mode: ${mode.toUpperCase()}`;
+function statsLine(stats: WinRateSnapshot): string {
+  return `📊 Win rate: ${formatWinRate(stats)} · Entries: ${stats.entries} · Open: ${stats.openPositions}`;
 }
 
 export type BuyReportInput = {
@@ -211,29 +207,23 @@ export type BuyReportInput = {
   explorerUrl?: string;
 };
 
-/** Rich BUY report for opened paper and live positions. */
+/** Compact BUY report for opened paper and live positions. */
 export function buildBuyMessage(input: BuyReportInput): string {
   const quote = input.quoteSymbol ? `/${input.quoteSymbol}` : "";
   const lines = [
-    `🟢 **BUY — ${input.symbol}${quote}** | ⛓️ ${chainLine(input.chain)}`,
-    modeLine(input.mode),
-    `📡 Source: ${formatSource(input.source)}`,
-    identityLines(
+    `🟢 **BUY — ${input.symbol}${quote}** · ${chainLine(input.chain)} · ${input.mode.toUpperCase()}`,
+    identityLine(
       input.tokenName,
       input.symbol,
-      input.tokenAddress,
-      input.pairAddress,
       input.dex,
       input.quoteSymbol,
       input.liquidityUsd,
+      input.source,
     ),
-    `💰 Entry: ${formatUsd(input.entryPriceUsd)}`,
-    `🔢 Qty: ${formatUnits(input.quantityRaw, input.quantityDecimals)} ${input.symbol}`,
-    `💵 Cost: ${baseAmount(input.costBaseRaw, input.chain)}${baseUsdHint(input.costBaseRaw, input.chain, input.baseUsdRate)}`,
-    `⛽ Gas: ${nativeAmount(input.networkFeeRaw, input.chain)}${nativeUsdHint(input.networkFeeRaw, input.chain, input.baseUsdRate)}`,
-    balanceLines(input.chain, input.before, input.after, input.baseUsdRate),
-    winRateLines(input.stats),
-    `🎯 Plan: TP ${input.tpSummary}`,
+    addressLine(input.tokenAddress, input.pairAddress),
+    `💰 Entry ${formatUsd(input.entryPriceUsd)} · Qty ${formatUnits(input.quantityRaw, input.quantityDecimals)} ${input.symbol} · Cost ${baseAmount(input.costBaseRaw, input.chain)}${baseUsdHint(input.costBaseRaw, input.chain, input.baseUsdRate)} · Gas ${nativeAmount(input.networkFeeRaw, input.chain)}`,
+    `🎯 TP ${input.tpSummary} · ${statsLine(input.stats)}`,
+    balanceLine(input.chain, input.before, input.after, input.baseUsdRate),
   ];
   if (input.pairAddress) lines.push(`🔗 Chart: ${chartUrl(input.chain, input.pairAddress)}`);
   if (input.txHash) {
@@ -279,7 +269,7 @@ export type ExitReportInput = {
   explorerUrl?: string;
 };
 
-/** Rich PARTIAL TP / CLOSE / TRAIL report for paper and live exits. */
+/** Compact PARTIAL TP / CLOSE / TRAIL report for paper and live exits. */
 export function buildExitMessage(input: ExitReportInput): string {
   const gainPct = input.entryPriceUsd > 0
     ? ((input.exitPriceUsd - input.entryPriceUsd) / input.entryPriceUsd) * 100
@@ -294,37 +284,29 @@ export function buildExitMessage(input: ExitReportInput): string {
   const outcome = input.closed ? (closedNegative ? "❌ LOSS" : "✅ WIN") : pnlNegative ? "➖" : "➕";
 
   const lines = [
-    `${title} | ⛓️ ${chainLine(input.chain)} ${outcome}`,
-    modeLine(input.mode),
-    `📡 Source: ${formatSource(input.source)}`,
-    `📋 Reason: ${input.reason}${input.closed ? "" : ` | Sold: ${input.sellPercent}%`}`,
-    identityLines(
+    `${title} · ${chainLine(input.chain)} · ${input.mode.toUpperCase()} ${outcome}`,
+    `📋 Reason: ${input.reason}${input.closed ? "" : ` · Sold ${input.sellPercent}%`} · 📡 Source: ${formatSource(input.source)}`,
+    identityLine(
       input.tokenName,
       input.symbol,
-      input.tokenAddress,
-      input.pairAddress,
       input.dex,
       input.quoteSymbol,
       input.liquidityUsd,
     ),
-    `💰 Entry: ${formatUsd(input.entryPriceUsd)} → Exit: ${formatUsd(input.exitPriceUsd)} (${formatGainPct(gainPct)})`,
-    `📈 High: ${formatUsd(input.highestPriceUsd)}`,
-    `💵 Proceeds: ${baseAmount(input.proceedsBaseRaw, input.chain)}${baseUsdHint(input.proceedsBaseRaw, input.chain, input.baseUsdRate)}`,
-    `💸 PnL (this exit): ${input.realizedPnlBaseRaw < 0n ? "−" : "+"}${baseAmount(input.realizedPnlBaseRaw < 0n ? -input.realizedPnlBaseRaw : input.realizedPnlBaseRaw, input.chain)}${baseUsdHint(input.realizedPnlBaseRaw, input.chain, input.baseUsdRate)}`,
-    `🧮 Position PnL (total): ${input.totalPositionPnlBaseRaw < 0n ? "−" : "+"}${baseAmount(input.totalPositionPnlBaseRaw < 0n ? -input.totalPositionPnlBaseRaw : input.totalPositionPnlBaseRaw, input.chain)}${baseUsdHint(input.totalPositionPnlBaseRaw, input.chain, input.baseUsdRate)}`,
+    addressLine(input.tokenAddress, input.pairAddress),
+    `💰 Entry: ${formatUsd(input.entryPriceUsd)} → Exit: ${formatUsd(input.exitPriceUsd)} (${formatGainPct(gainPct)}) · High: ${formatUsd(input.highestPriceUsd)}`,
+    `💵 Proceeds: ${baseAmount(input.proceedsBaseRaw, input.chain)}${baseUsdHint(input.proceedsBaseRaw, input.chain, input.baseUsdRate)} · 💸 PnL: ${input.realizedPnlBaseRaw < 0n ? "−" : "+"}${baseAmount(input.realizedPnlBaseRaw < 0n ? -input.realizedPnlBaseRaw : input.realizedPnlBaseRaw, input.chain)} · 🧮 Total: ${input.totalPositionPnlBaseRaw < 0n ? "−" : "+"}${baseAmount(input.totalPositionPnlBaseRaw < 0n ? -input.totalPositionPnlBaseRaw : input.totalPositionPnlBaseRaw, input.chain)} · ⛽ Gas: ${nativeAmount(input.networkFeeRaw, input.chain)}`,
   ];
 
   if (!input.closed) {
     lines.push(
-      `📦 Remaining: ${formatUnits(input.remainingQuantityRaw, input.remainingQuantityDecimals)} ${input.symbol} | Cost left: ${baseAmount(input.remainingCostBaseRaw, input.chain)}${baseUsdHint(input.remainingCostBaseRaw, input.chain, input.baseUsdRate)}`,
+      `📦 Remaining: ${formatUnits(input.remainingQuantityRaw, input.remainingQuantityDecimals)} ${input.symbol} · Cost left: ${baseAmount(input.remainingCostBaseRaw, input.chain)}`,
     );
   }
 
   lines.push(
-    `⛽ Gas: ${nativeAmount(input.networkFeeRaw, input.chain)}${nativeUsdHint(input.networkFeeRaw, input.chain, input.baseUsdRate)}`,
-    balanceLines(input.chain, input.before, input.after, input.baseUsdRate),
-    `⏱️ Duration: ${formatDuration(input.closedAt - input.openedAt)}`,
-    winRateLines(input.stats),
+    balanceLine(input.chain, input.before, input.after, input.baseUsdRate),
+    `⏱️ Duration: ${formatDuration(input.closedAt - input.openedAt)} · ${statsLine(input.stats)}`,
   );
   if (input.pairAddress) lines.push(`🔗 Chart: ${chartUrl(input.chain, input.pairAddress)}`);
   if (input.txHash) {
@@ -353,29 +335,24 @@ export type TrailingReportInput = {
   stats: WinRateSnapshot;
 };
 
-/** Rich TRAILING ACTIVATED report. */
+/** Compact TRAILING ACTIVATED report. */
 export function buildTrailingMessage(input: TrailingReportInput): string {
   const gainPct = input.entryPriceUsd > 0
     ? ((input.currentPriceUsd - input.entryPriceUsd) / input.entryPriceUsd) * 100
     : Number.NaN;
   const stopPrice = input.highestPriceUsd * (1 - input.distancePercent / 100);
   return [
-    `🛡️ **TRAILING ON — ${input.symbol}** | ⛓️ ${chainLine(input.chain)}`,
-    modeLine(input.mode),
-    identityLines(
+    `🛡️ **TRAILING ON — ${input.symbol}** · ${chainLine(input.chain)} · ${input.mode.toUpperCase()}`,
+    identityLine(
       input.tokenName,
       input.symbol,
-      input.tokenAddress,
-      input.pairAddress,
       input.dex,
       input.quoteSymbol,
       input.liquidityUsd,
     ),
-    `💰 Entry: ${formatUsd(input.entryPriceUsd)} | Now: ${formatUsd(input.currentPriceUsd)} (${formatGainPct(gainPct)})`,
-    `📈 High: ${formatUsd(input.highestPriceUsd)} | 🛑 Stop: ${formatUsd(stopPrice)} (−${input.distancePercent}% from high)`,
-    `🎯 Activation: +${input.activationPercent}% reached`,
-    `⏱️ Open for: ${formatDuration(Date.now() - input.openedAt)}`,
-    winRateLines(input.stats),
+    addressLine(input.tokenAddress, input.pairAddress),
+    `💰 Entry: ${formatUsd(input.entryPriceUsd)} | Now: ${formatUsd(input.currentPriceUsd)} (${formatGainPct(gainPct)}) · High: ${formatUsd(input.highestPriceUsd)} · Stop: ${formatUsd(stopPrice)} (−${input.distancePercent}% from high)`,
+    `🎯 Activation: +${input.activationPercent}% · ⏱️ Open for: ${formatDuration(Date.now() - input.openedAt)} · ${statsLine(input.stats)}`,
   ].join("\n");
 }
 
@@ -407,16 +384,12 @@ export function buildPlumbingMessage(input: PlumbingReportInput): string {
       ? `${icon} **${input.reason} SUBMITTED — ${input.symbol}**`
       : `${icon} **${input.reason} PENDING — ${input.symbol}**`;
   const lines = [
-    `${title} | ⛓️ ${chainLine(input.chain)}`,
-    modeLine(input.mode),
-    `🪙 Token: ${input.symbol}`,
-    `📝 CA: \`${input.tokenAddress}\``,
+    `${title} · ${chainLine(input.chain)} · ${input.mode.toUpperCase()}`,
+    `🪙 ${input.symbol} · ${input.dex} · 📝 CA: \`${input.tokenAddress}\`${input.pairAddress ? ` · 🏊 LP: \`${input.pairAddress}\`` : ""}`,
+    `💵 Amount: ${input.amountLabel}`,
+    `🧾 Tx: \`${input.txHash}\``,
+    `🔍 Explorer: ${input.explorerUrl}${input.txHash}`,
   ];
-  if (input.pairAddress) lines.push(`🏊 Pair/LP: \`${input.pairAddress}\``);
-  lines.push(`🏦 DEX: ${input.dex}`);
-  lines.push(`💵 Amount: ${input.amountLabel}`);
-  lines.push(`🧾 Tx: \`${input.txHash}\``);
-  lines.push(`🔍 Explorer: ${input.explorerUrl}${input.txHash}`);
   if (input.pairAddress) lines.push(`🔗 Chart: ${chartUrl(input.chain, input.pairAddress)}`);
   if (input.note) lines.push(`ℹ️ ${input.note}`);
   return lines.join("\n");
