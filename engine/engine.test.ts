@@ -97,6 +97,7 @@ describe("TradingEngine time-stop", () => {
         openedAt,
         lastActionAt: openedAt,
         pairAddress: "0xpair",
+        signalPairAddress: "0xpair",
         dex: "argus",
         quoteSymbol: "USDC",
         liquidityUsd: null,
@@ -187,6 +188,7 @@ describe("TradingEngine time-stop", () => {
         openedAt,
         lastActionAt: openedAt,
         pairAddress: "0xpair",
+        signalPairAddress: "0xpair",
         dex: "argus",
         quoteSymbol: "USDC",
         liquidityUsd: null,
@@ -274,6 +276,7 @@ describe("TradingEngine time-stop", () => {
         openedAt,
         lastActionAt: openedAt,
         pairAddress: "0xpair",
+        signalPairAddress: "0xpair",
         dex: "argus",
         quoteSymbol: "USDC",
         liquidityUsd: 50000,
@@ -361,6 +364,7 @@ describe("TradingEngine time-stop", () => {
         openedAt,
         lastActionAt: openedAt,
         pairAddress: "0xpair",
+        signalPairAddress: "0xpair",
         dex: "argus",
         quoteSymbol: "USDC",
         liquidityUsd: 50000,
@@ -396,6 +400,84 @@ describe("TradingEngine time-stop", () => {
     expect(stats.balanceBase).toBeCloseTo(107, 9);
   });
 });
+
+  test("fallback venue never hijacks the signal-pair preference", async () => {
+    const dir = `/tmp/opencode/engine-pin-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * 10n ** 18n,
+      initialNativeRaw: 100n * 10n ** 18n,
+    });
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 25,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        maxDailyLossPct: 0,
+        baseUsdRate: 1,
+      },
+      undefined,
+      async () => undefined,
+    );
+
+    const openedAt = Date.now() - 60_000;
+    await store.update((state) => {
+      state.positions["0xtoken"] = {
+        tokenAddress: "0xtoken",
+        symbol: "PIN",
+        name: "Pin Token",
+        decimals: 18,
+        quantityRaw: "1000",
+        initialQuantityRaw: "1000",
+        costBaseRaw: (10n * 10n ** 18n).toString(),
+        realizedPnlBaseRaw: "0",
+        entryPriceUsd: 100,
+        currentPriceUsd: 100,
+        highestPriceUsd: 100,
+        feesNativeRaw: "0",
+        takeProfitIndex: 0,
+        trailingActivated: false,
+        openedAt,
+        lastActionAt: openedAt,
+        pairAddress: "0xsignal",
+        signalPairAddress: "0xsignal",
+        dex: "argus",
+        quoteSymbol: "USDC",
+        liquidityUsd: 50000,
+        snapshot: emptySnapshot(),
+        source: "debot-dashboard",
+      };
+    });
+
+    expect(engine.getPricePreferences().get("0xtoken")).toBe("0xsignal");
+
+    // Flat price from a different venue: display metadata follows, pin holds.
+    await engine.onPrice({
+      tokenAddress: "0xtoken",
+      symbol: "PIN",
+      pairAddress: "0xfallback",
+      dexId: "other",
+      quoteSymbol: "USDC",
+      priceUsd: 100,
+      priceNative: null,
+      liquidityUsd: null,
+    });
+
+    expect(store.data.positions["0xtoken"]?.pairAddress).toBe("0xfallback");
+    expect(engine.getPricePreferences().get("0xtoken")).toBe("0xsignal");
+    expect(store.data.positions["0xtoken"]).toBeDefined();
+  });
 
   test("paper buy takes min quantity and native-chain gas only", async () => {
     const dir = `/tmp/opencode/engine-buyfill-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;

@@ -107,6 +107,13 @@ export type Position = {
   lastActionAt: number;
   /** Pair/LP address; refreshed from DexScreener on every price update. */
   pairAddress: string;
+  /**
+   * Immutable signal venue: the pair that generated the entry signal.
+   * Price selection always prefers this pair whenever it still reports;
+   * pairAddress above is the currently selected display venue and may move.
+   * Empty for legacy positions (preference then falls back to pairAddress).
+   */
+  signalPairAddress: string;
   /** Trading venue (Debot dex_name or DexScreener dexId). */
   dex: string;
   /** Quote-side symbol (e.g. WETH/USDC). */

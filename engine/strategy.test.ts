@@ -33,6 +33,7 @@ function position(overrides: Partial<Position> = {}): Position {
     openedAt: Date.now(),
     lastActionAt: Date.now(),
     pairAddress: "0xpair",
+    signalPairAddress: "0xpair",
     dex: "uniswap",
     quoteSymbol: "WETH",
     liquidityUsd: 100000,

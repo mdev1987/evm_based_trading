@@ -101,6 +101,9 @@ function normalizePosition(value: unknown): WalletState["positions"][string] | n
     openedAt: finiteNumber(position.openedAt, now),
     lastActionAt: finiteNumber(position.lastActionAt, now),
     pairAddress: typeof position.pairAddress === "string" ? position.pairAddress : "",
+    signalPairAddress: typeof position.signalPairAddress === "string"
+      ? position.signalPairAddress
+      : "",
     dex: typeof position.dex === "string" && position.dex ? position.dex : "unknown",
     quoteSymbol: typeof position.quoteSymbol === "string" ? position.quoteSymbol : "",
     liquidityUsd: typeof position.liquidityUsd === "number" && Number.isFinite(position.liquidityUsd)

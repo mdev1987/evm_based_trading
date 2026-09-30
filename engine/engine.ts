@@ -180,15 +180,17 @@ export class TradingEngine {
 
   /**
    * Signal-pair pinning for deterministic price selection (token → pair).
-   * Positions pin to the pair that generated the signal; pending swaps fill
-   * gaps. DexScreener otherwise returns every pair per token and exit triggers
-   * could evaluate on a different pool each poll.
+   * Each token is permanently pinned to the pair that generated its signal
+   * whenever that pair still reports a price; signalPairAddress is immutable,
+   * so a fallback venue can never hijack the preference (pairAddress itself
+   * keeps tracking the currently selected display venue).
    */
   getPricePreferences(): Map<string, string> {
     const map = new Map<string, string>();
     for (const position of Object.values(this.store.data.positions)) {
-      if (position.pairAddress) {
-        map.set(position.tokenAddress.toLowerCase(), position.pairAddress);
+      const pinned = position.signalPairAddress || position.pairAddress;
+      if (pinned) {
+        map.set(position.tokenAddress.toLowerCase(), pinned);
       }
     }
     for (const pending of Object.values(this.store.data.pendingSwaps)) {
@@ -809,6 +811,7 @@ export class TradingEngine {
       openedAt: Date.now(),
       lastActionAt: Date.now(),
       pairAddress: signal.pairAddress,
+      signalPairAddress: signal.pairAddress,
       dex: signal.dex || "unknown",
       quoteSymbol: signal.quoteSymbol || this.config.chain.baseSymbol,
       liquidityUsd: signal.liquidityUsd,
@@ -1461,6 +1464,7 @@ export class TradingEngine {
         openedAt: pending.submittedAt,
         lastActionAt: Date.now(),
         pairAddress: pending.pairAddress,
+        signalPairAddress: pending.pairAddress,
         dex: pending.dex || "unknown",
         quoteSymbol: this.config.chain.baseSymbol,
         liquidityUsd: pending.entryLiquidityUsd,
