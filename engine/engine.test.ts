@@ -58,10 +58,11 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         baseUsdRate: 1,
-        // Stub 0x quote: 1000 token units -> 11 USDC proceeds, zero gas.
+        // Stub 0x quote: indicative 12 USDC but guaranteed minimum 11 USDC,
+        // zero gas. Paper must settle the pessimistic minimum.
         quoteFn: async () => ({
           fromTokenAmount: 1000n,
-          toTokenAmount: 11n * 10n ** 18n,
+          toTokenAmount: 12n * 10n ** 18n,
           toTokenAmountMin: 11n * 10n ** 18n,
           fees: [],
           priceImpact: undefined,
@@ -116,12 +117,153 @@ describe("TradingEngine time-stop", () => {
     expect(store.data.positions["0xtoken"]).toBeUndefined();
     expect(store.data.losses).toBe(0);
     expect(store.data.wins).toBe(1);
-    // Proceeds = 10 USDC * 110/100 = 11 USDC → balance 100 + 11 = 111.
+    // Proceeds = guaranteed minimum 11 USDC (not indicative 12) → 100 + 11.
     expect(store.data.balanceBaseRaw).toBe((111n * 10n ** 18n).toString());
     const close = messages.find((m) => m.includes("TIME"));
     expect(close).toBeDefined();
     expect(close).toContain("Debot dashboard");
     expect(close).toContain("0xtoken");
+  });
+
+  test("paper sell pays swap + approval gas at the quoted rate", async () => {
+    const dir = `/tmp/opencode/engine-feefull-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * 10n ** 18n,
+      initialNativeRaw: 100n * 10n ** 18n,
+    });
+
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 30,
+        trailingDistancePercent: 10,
+        maxHoldMs: 1000,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        baseUsdRate: 1,
+        // 1 USDC quoted gas; paper sell must deduct 2x (swap + approval).
+        quoteFn: async () => ({
+          fromTokenAmount: 1000n,
+          toTokenAmount: 11n * 10n ** 18n,
+          toTokenAmountMin: 11n * 10n ** 18n,
+          fees: [{ type: "network", amount: 10n ** 18n, token: "USDC" }],
+          priceImpact: undefined,
+        }),
+      },
+      undefined,
+      async () => undefined,
+    );
+
+    const openedAt = Date.now() - 5000;
+    await store.update((state) => {
+      state.positions["0xtoken"] = {
+        tokenAddress: "0xtoken",
+        symbol: "OLD",
+        name: "Old Token",
+        decimals: 18,
+        quantityRaw: "1000",
+        initialQuantityRaw: "1000",
+        costBaseRaw: (10n * 10n ** 18n).toString(),
+        realizedPnlBaseRaw: "0",
+        entryPriceUsd: 100,
+        currentPriceUsd: 100,
+        highestPriceUsd: 100,
+        feesNativeRaw: "0",
+        takeProfitIndex: 0,
+        trailingActivated: false,
+        openedAt,
+        lastActionAt: openedAt,
+        pairAddress: "0xpair",
+        dex: "argus",
+        quoteSymbol: "USDC",
+        liquidityUsd: null,
+        snapshot: emptySnapshot(),
+        source: "debot-dashboard",
+      };
+    });
+
+    await engine.onPrice({
+      tokenAddress: "0xtoken",
+      symbol: "OLD",
+      pairAddress: "0xpair",
+      dexId: "argus",
+      quoteSymbol: "USDC",
+      priceUsd: 110,
+      priceNative: null,
+      liquidityUsd: null,
+    });
+
+    expect(store.data.positions["0xtoken"]).toBeUndefined();
+    // 100 + 11 proceeds − 2 gas = 109.
+    expect(store.data.balanceBaseRaw).toBe((109n * 10n ** 18n).toString());
+    expect(store.data.networkFeesNativeRaw).toBe((2n * 10n ** 18n).toString());
+  });
+
+  test("paper buy takes min quantity and native-chain gas only", async () => {
+    const dir = `/tmp/opencode/engine-buyfill-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * 10n ** 18n,
+      initialNativeRaw: 100n * 10n ** 18n,
+    });
+
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 30,
+        trailingDistancePercent: 10,
+        maxHoldMs: 60_000,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * 10n ** 18n,
+        maxOpenPositions: 3,
+        baseUsdRate: 1,
+        // Indicative 500 units, guaranteed 495, 1 USDC gas, no approval on Arc.
+        quoteFn: async () => ({
+          fromTokenAmount: 10n * 10n ** 18n,
+          toTokenAmount: 500n * 10n ** 18n,
+          toTokenAmountMin: 495n * 10n ** 18n,
+          fees: [{ type: "network", amount: 10n ** 18n, token: "USDC" }],
+          priceImpact: undefined,
+        }),
+      },
+      undefined,
+      async () => undefined,
+    );
+
+    const opened = await engine.onSignal({
+      tokenAddress: "0xnew",
+      symbol: "NEW",
+      name: "New Token",
+      decimals: 18,
+      pairAddress: "0xpair",
+      priceUsd: 1,
+      dex: "argus",
+      quoteSymbol: "USDC",
+      liquidityUsd: null,
+      snapshot: emptySnapshot(),
+      source: "debot-dashboard",
+    });
+
+    expect(opened).toBe(true);
+    const position = store.data.positions["0xnew"];
+    expect(position?.quantityRaw).toBe((495n * 10n ** 18n).toString());
+    // 100 − 10 cost − 1 gas (no approval for native-base buys).
+    expect(store.data.balanceBaseRaw).toBe((89n * 10n ** 18n).toString());
+    expect(position?.costBaseRaw).toBe((11n * 10n ** 18n).toString());
   });
 });
 

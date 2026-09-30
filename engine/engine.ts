@@ -397,6 +397,7 @@ export class TradingEngine {
       const before = await this.getWalletBalances();
 
       if (this.config.chain.baseIsNative) {
+        // Native-base buys need no ERC-20 approval, in paper or live.
         if (before.baseRaw < this.config.buyAmountBaseRaw + estimatedNetworkFee) {
           console.log(
             `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: insufficient ${this.config.chain.baseSymbol} for trade + gas`,
@@ -410,7 +411,13 @@ export class TradingEngine {
           );
           return false;
         }
-        if (before.nativeRaw < estimatedNetworkFee) {
+        // Live pays a separate approval tx when selling an ERC-20 base; paper
+        // models it (see openPaperPosition), so preflight both at 2x fee.
+        // Live preflight stays at 1x — settlement measures actual gas.
+        const requiredNativeFee = this.config.mode === "paper"
+          ? estimatedNetworkFee * 2n
+          : estimatedNetworkFee;
+        if (before.nativeRaw < requiredNativeFee) {
           console.log(
             `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: insufficient ${this.config.chain.nativeSymbol} for gas`,
           );
@@ -612,7 +619,10 @@ export class TradingEngine {
     networkFee: bigint,
     before: { baseRaw: bigint; nativeRaw: bigint },
   ): Promise<boolean> {
-    const quantity = quote.toTokenAmount;
+    // Pessimistic fill: assume worst-case slippage execution. The quote's
+    // minimum is the on-chain guarantee a live swap would carry, so paper
+    // never books a better price than live could lock in.
+    const quantity = quote.toTokenAmountMin;
     if (quantity <= 0n) {
       console.log(
         `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: zero output`,
@@ -620,12 +630,19 @@ export class TradingEngine {
       return false;
     }
 
+    // Live pays an approval transaction whenever it sells an ERC-20 token.
+    // Native-base buys (Arc) sell the native asset and need none; ERC-20-base
+    // buys do. The approval is modeled at the quoted swap-gas rate, which is
+    // an upper bound (a plain approve costs less than a swap) — pessimistic
+    // by design.
+    const executionFee = this.config.chain.baseIsNative ? networkFee : networkFee * 2n;
+
     const afterBase = this.config.chain.baseIsNative
-      ? before.baseRaw - this.config.buyAmountBaseRaw - networkFee
+      ? before.baseRaw - this.config.buyAmountBaseRaw - executionFee
       : before.baseRaw - this.config.buyAmountBaseRaw;
     const afterNative = this.config.chain.baseIsNative
       ? afterBase
-      : before.nativeRaw - networkFee;
+      : before.nativeRaw - executionFee;
 
     const position: Position = {
       tokenAddress: signal.tokenAddress,
@@ -636,16 +653,16 @@ export class TradingEngine {
       initialQuantityRaw: quantity.toString(),
       // For native-base chains, buy gas is paid from the same balance and is
       // therefore part of the acquisition cost. ERC-20-base gas is tracked
-      // separately below.
+      // separately below. Both include the modeled approval fee above.
       costBaseRaw: (this.config.chain.baseIsNative
-        ? this.config.buyAmountBaseRaw + networkFee
+        ? this.config.buyAmountBaseRaw + executionFee
         : this.config.buyAmountBaseRaw
       ).toString(),
       realizedPnlBaseRaw: "0",
       entryPriceUsd: signal.priceUsd,
       currentPriceUsd: signal.priceUsd,
       highestPriceUsd: signal.priceUsd,
-      feesNativeRaw: networkFee.toString(),
+      feesNativeRaw: executionFee.toString(),
       takeProfitIndex: 0,
       trailingActivated: false,
       openedAt: Date.now(),
@@ -662,7 +679,7 @@ export class TradingEngine {
       state.balanceBaseRaw = afterBase.toString();
       state.balanceNativeRaw = afterNative.toString();
       state.networkFeesNativeRaw = (
-        toBigInt(state.networkFeesNativeRaw, "networkFeesNativeRaw") + networkFee
+        toBigInt(state.networkFeesNativeRaw, "networkFeesNativeRaw") + executionFee
       ).toString();
       state.entries += 1;
       state.positions[key] = position;
@@ -690,7 +707,7 @@ export class TradingEngine {
         quantityRaw: quantity,
         quantityDecimals: position.decimals,
         costBaseRaw: this.config.buyAmountBaseRaw,
-        networkFeeRaw: networkFee,
+        networkFeeRaw: executionFee,
         before,
         after,
         stats: this.winRateSnapshot(),
@@ -868,10 +885,13 @@ export class TradingEngine {
       : 100;
 
     if (this.config.mode === "paper") {
+      // Paper sells model approval + swap (see sellPaper); preflight both.
+      // Live preflight stays at 1x — settlement measures actual gas.
+      const requiredSellGas = estimatedNetworkFee * 2n;
       if (
         this.config.chain.baseIsNative
-          ? before.baseRaw < estimatedNetworkFee
-          : before.nativeRaw < estimatedNetworkFee
+          ? before.baseRaw < requiredSellGas
+          : before.nativeRaw < requiredSellGas
       ) {
         console.log(
           `[ENGINE][${this.config.chain.name}] ${reason} ${position.symbol}: insufficient ${this.config.chain.nativeSymbol} for gas`,
@@ -903,8 +923,13 @@ export class TradingEngine {
     networkFee: bigint,
     before: { baseRaw: bigint; nativeRaw: bigint },
   ): Promise<void> {
-    const proceeds = quote.toTokenAmount;
+    // Pessimistic fill: worst-case slippage proceeds (live on-chain guarantee).
+    const proceeds = quote.toTokenAmountMin;
     if (proceeds <= 0n) return;
+
+    // Every position token is an ERC-20, so live always pays an approval tx
+    // before the swap. Model it at the quoted swap-gas rate (upper bound).
+    const executionFee = networkFee * 2n;
 
     const exitPriceUsd = position.currentPriceUsd;
     const highestPriceUsd = position.highestPriceUsd;
@@ -921,11 +946,11 @@ export class TradingEngine {
     const key = position.tokenAddress.toLowerCase();
 
     const afterBase = this.config.chain.baseIsNative
-      ? before.baseRaw + proceeds - networkFee
+      ? before.baseRaw + proceeds - executionFee
       : before.baseRaw + proceeds;
     const afterNative = this.config.chain.baseIsNative
       ? afterBase
-      : before.nativeRaw - networkFee;
+      : before.nativeRaw - executionFee;
 
     const totalPositionPnl = await this.applySellResult(
       position,
@@ -933,7 +958,7 @@ export class TradingEngine {
       remainingQuantity,
       remainingCost,
       realizedPnl,
-      networkFee,
+      executionFee,
       afterBase,
       afterNative,
       undefined,
@@ -963,7 +988,7 @@ export class TradingEngine {
         remainingQuantityRaw: remainingQuantity,
         remainingQuantityDecimals: position.decimals,
         remainingCostBaseRaw: remainingCost,
-        networkFeeRaw: networkFee,
+        networkFeeRaw: executionFee,
         before,
         after: { baseRaw: afterBase, nativeRaw: afterNative },
         openedAt,
