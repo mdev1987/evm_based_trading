@@ -1,4 +1,4 @@
-import { config, formatUnits, getStateFile, NATIVE_TOKEN_SENTINEL, parseUnits, type ChainConfig } from "./services/config";
+import { config, formatUnits, getHistoryFile, getStateFile, NATIVE_TOKEN_SENTINEL, parseUnits, type ChainConfig } from "./services/config";
 import { DebotAIService, DebotDashboardService, getDebotPriceState } from "./services/debot_ai";
 import { getPrices, watchPrices, type TokenPrice } from "./services/dexscreener";
 import { getTokenPriceUsd, DexPaprikaPoolService, usdToBaseRaw } from "./services/dexpaprika";
@@ -7,6 +7,7 @@ import { TradingEngine } from "./engine/engine";
 import { Strategy } from "./engine/strategy";
 import { EvmWalletService } from "./services/wallet";
 import { TelegramService } from "./services/telegram";
+import { HistoryService } from "./services/history";
 import { emptySnapshot, snapshotNumber, snapshotTimestamp, type Signal } from "./engine/types";
 
 type TrackedSignal = {
@@ -230,6 +231,7 @@ async function createRuntime(
   chain: ChainConfig,
   wallet: EvmWalletService | undefined,
   telegram: TelegramService,
+  history: HistoryService,
 ): Promise<ChainRuntime> {
   const paper = await paperBalances(chain);
   const initialBalances = config.mode === "paper"
@@ -255,6 +257,7 @@ async function createRuntime(
         : parseUnits(config.risk.buyAmountBase, chain.baseDecimals, "BUY_AMOUNT_BASE"),
       maxOpenPositions: config.risk.maxOpenPositions,
       baseUsdRate: config.mode === "paper" ? paper.usdRate : null,
+      history,
     },
     wallet,
     (message) => telegram.send(message),
@@ -311,11 +314,16 @@ async function createRuntime(
           }
           // Dashboard items carry price only: backfill liq/vol/txns/mcap from
           // DexPaprika (1h cache per token) so entry filters can evaluate them.
+          // Complete misses cache only 5 minutes: a token indexed seconds
+          // after first sight must not stay "unverified" for a full hour.
           if (snapshots) {
             await Promise.all(ranks.map(async (rank) => {
               const key = rank.tokenAddress.toLowerCase();
               const cached = snapshotCache.get(key);
-              if (cached && Date.now() - cached.at < 3600_000) {
+              const ttl = cached && (cached.liquidityUsd !== null || cached.volumeUsd24h !== null || cached.txns24h !== null)
+                ? 3600_000
+                : 300_000;
+              if (cached && Date.now() - cached.at < ttl) {
                 rank.liquidityUsd = cached.liquidityUsd;
                 Object.assign(rank.snapshot, {
                   volumeUsd24h: cached.volumeUsd24h,
@@ -496,6 +504,11 @@ async function main(): Promise<void> {
   const telegram = new TelegramService(config.telegram);
   await telegram.verify();
 
+  const history = config.history.enabled
+    ? await HistoryService.open(getHistoryFile(config))
+    : HistoryService.disabled();
+  console.log(`History: ${history.enabled ? getHistoryFile(config) : "disabled"}`);
+
   const startedAt = Date.now();
 
   const wallet = config.mode === "live"
@@ -506,7 +519,7 @@ async function main(): Promise<void> {
   try {
     for (const chain of config.chains) {
       try {
-        const runtime = await createRuntime(chain, wallet, telegram);
+        const runtime = await createRuntime(chain, wallet, telegram, history);
         runtimes.push(runtime);
 
         const address = config.mode === "live" ? await wallet!.getAddress(chain) : "paper-wallet";

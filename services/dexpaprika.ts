@@ -258,6 +258,8 @@ export class DexPaprikaPoolService {
    * Entry snapshot for an arbitrary token (used to enrich price-only
    * dashboard signals before entry filters run). Returns nulls when the
    * token is unknown; never throws — callers treat nulls as "unverified".
+   * Transport errors are logged (not swallowed): if the API itself is down,
+   * every signal degrades to unverified and the operator must see why.
    */
   async getTokenSnapshot(address: string): Promise<{
     liquidityUsd: number | null;
@@ -283,7 +285,10 @@ export class DexPaprikaPoolService {
         mktCapUsd: snapshotNumber(raw?.market_cap),
         fdvUsd: snapshotNumber(summary?.fdv),
       };
-    } catch {
+    } catch (error) {
+      console.warn(
+        `[DEXPAPRIKA][${this.network}] snapshot failed for ${address}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return nulls;
     }
   }

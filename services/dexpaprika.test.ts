@@ -159,4 +159,39 @@ describe("DexPaprikaPoolService", () => {
     const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", {}, client);
     expect(await service.getNewPoolSignals(5)).toEqual([]);
   });
+
+  test("getTokenSnapshot maps summary fields", async () => {
+    const { client } = stubClient([], {
+      [NEW_TOKEN.toLowerCase()]: {
+        symbol: "NEW",
+        decimals: 18,
+        market_cap: 1000000,
+        summary: {
+          liquidity_usd: 50000,
+          fdv: 2000000,
+          "24h": { volume_usd: 20000, txns: 100 },
+        },
+      },
+    });
+    const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", {}, client);
+    expect(await service.getTokenSnapshot(NEW_TOKEN)).toEqual({
+      liquidityUsd: 50000,
+      volumeUsd24h: 20000,
+      txns24h: 100,
+      mktCapUsd: 1000000,
+      fdvUsd: 2000000,
+    });
+  });
+
+  test("getTokenSnapshot returns nulls when the token is unknown", async () => {
+    const { client } = stubClient([], {});
+    const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", {}, client);
+    expect(await service.getTokenSnapshot("0xunknown")).toEqual({
+      liquidityUsd: null,
+      volumeUsd24h: null,
+      txns24h: null,
+      mktCapUsd: null,
+      fdvUsd: null,
+    });
+  });
 });

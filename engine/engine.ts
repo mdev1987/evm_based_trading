@@ -2,6 +2,7 @@ import type { ChainConfig, TradingMode } from "../services/config";
 import { formatUnits } from "../services/config";
 import { getZeroExQuote, ZeroExQuoteError } from "../services/zero_ex";
 import type { EvmWalletService } from "../services/wallet";
+import type { HistoryService } from "../services/history";
 import type { StateStore } from "./store";
 import { Strategy } from "./strategy";
 import type { PendingSwap, PriceUpdate, Position, Signal } from "./types";
@@ -22,6 +23,8 @@ export type TradingEngineConfig = {
   maxOpenPositions: number;
   /** Base-asset USD rate for display hints; null when unknown. */
   baseUsdRate: number | null;
+  /** DuckDB analytical mirror; null disables history writes (fail-open). */
+  history?: HistoryService | null;
 };
 
 /** Compact USD for entry logs, e.g. $1.23M / $4.56K / n/a. */
@@ -167,8 +170,40 @@ export class TradingEngine {
   }
 
   /** Return whether a live transaction is already pending for a token. */
-  private hasPendingForToken(tokenAddress: string): boolean {
-    const key = tokenAddress.toLowerCase();
+  /** DuckDB analytical mirror; null when history is disabled (fail-open). */
+  private history(): HistoryService | null {
+    return this.config.history ?? null;
+  }
+
+  /** Mirror one opened position into the history database (never throws). */
+  private recordEntry(position: Position, costRaw: bigint): Promise<void> {
+    return this.history()?.recordEntry({
+      chain: this.config.chain.name,
+      mode: this.config.mode,
+      tokenAddress: position.tokenAddress,
+      symbol: position.symbol,
+      name: position.name,
+      source: position.source,
+      dex: position.dex,
+      pairAddress: position.pairAddress,
+      openedAt: position.openedAt,
+      entryPriceUsd: position.entryPriceUsd,
+      entryCostRaw: costRaw.toString(),
+      entryCostDisplay: Number(formatUnits(costRaw, this.config.chain.baseDecimals)),
+      baseSymbol: this.config.chain.baseSymbol,
+      baseDecimals: this.config.chain.baseDecimals,
+      liqUsd: position.liquidityUsd,
+      vol24Usd: position.snapshot.volumeUsd24h,
+      txns24: position.snapshot.txns24h,
+      buys24: position.snapshot.buys24h,
+      sells24: position.snapshot.sells24h,
+      mcapUsd: position.snapshot.mktCapUsd,
+      fdvUsd: position.snapshot.fdvUsd,
+      holders: position.snapshot.holders,
+    }) ?? Promise.resolve();
+  }
+
+  private hasPendingForToken(tokenAddress: string): boolean {    const key = tokenAddress.toLowerCase();
     return Object.values(this.store.data.pendingSwaps).some(
       (pending) => pending.tokenAddress.toLowerCase() === key,
     );
@@ -295,6 +330,17 @@ export class TradingEngine {
         console.log(
           `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: ${snapshotSkip}`,
         );
+        await this.history()?.recordSkip({
+          chain: this.config.chain.name,
+          symbol: signal.symbol,
+          tokenAddress: signal.tokenAddress,
+          source: signal.source,
+          reason: snapshotSkip,
+          liqUsd: signal.liquidityUsd,
+          vol24Usd: signal.snapshot.volumeUsd24h,
+          txns24: signal.snapshot.txns24h,
+          eventAt: Date.now(),
+        });
         return false;
       }
 
@@ -319,6 +365,19 @@ export class TradingEngine {
         });
       } catch (error) {
         this.handleQuoteError("BUY", signal.symbol, error);
+        if (error instanceof ZeroExQuoteError) {
+          await this.history()?.recordSkip({
+            chain: this.config.chain.name,
+            symbol: signal.symbol,
+            tokenAddress: signal.tokenAddress,
+            source: signal.source,
+            reason: `quote:${error.code}`,
+            liqUsd: signal.liquidityUsd,
+            vol24Usd: signal.snapshot.volumeUsd24h,
+            txns24: signal.snapshot.txns24h,
+            eventAt: Date.now(),
+          });
+        }
         return false;
       }
 
@@ -597,6 +656,7 @@ export class TradingEngine {
       `[ENGINE][${this.config.chain.name}] Opened ${signal.symbol} | PAPER | ` +
         `cost ${formatUnits(this.config.buyAmountBaseRaw, this.config.chain.baseDecimals)} ${this.config.chain.baseSymbol}`,
     );
+    await this.recordEntry(position, toBigInt(position.costBaseRaw, "position.costBaseRaw"));
 
     const after: BalanceSnapshot = { baseRaw: afterBase, nativeRaw: afterNative };
     await this.notify(
@@ -789,6 +849,8 @@ export class TradingEngine {
       0n,
       afterBase,
       afterNative,
+      undefined,
+      { reason: "TIME", exitPriceUsd: position.currentPriceUsd, sellPercent: 100 },
     );
 
     const meta = this.positionMeta(position);
@@ -931,6 +993,8 @@ export class TradingEngine {
       networkFee,
       afterBase,
       afterNative,
+      undefined,
+      { reason, exitPriceUsd, sellPercent },
     );
 
     await this.notify(
@@ -1195,6 +1259,7 @@ export class TradingEngine {
       console.log(
         `[ENGINE][${this.config.chain.name}] Opened ${pending.symbol} | LIVE | tx ${pending.hash}`,
       );
+      await this.recordEntry(position, toBigInt(position.costBaseRaw, "position.costBaseRaw"));
       await this.notify(
         buildBuyMessage({
           chain: this.config.chain,
@@ -1313,6 +1378,7 @@ export class TradingEngine {
       after.baseRaw,
       after.nativeRaw,
       pending.id,
+      { reason: pending.reason, exitPriceUsd, sellPercent },
     );
 
     await this.notify(
@@ -1370,6 +1436,7 @@ export class TradingEngine {
     afterBase: bigint,
     afterNative: bigint,
     pendingId?: string,
+    exit?: { reason: string; exitPriceUsd: number | null; sellPercent: number },
   ): Promise<bigint> {
     const existingPositionPnl = toSignedBigInt(
       position.realizedPnlBaseRaw,
@@ -1406,6 +1473,23 @@ export class TradingEngine {
       position.lastActionAt = Date.now();
       state.positions[key] = position;
       if (pendingId) delete state.pendingSwaps[pendingId];
+    });
+
+    const decimals = this.config.chain.baseDecimals;
+    await this.history()?.recordExit({
+      chain: this.config.chain.name,
+      tokenAddress: position.tokenAddress,
+      symbol: position.symbol,
+      openedAt: position.openedAt,
+      reason: exit?.reason ?? "unknown",
+      sellPercent: exit?.sellPercent ?? (remainingQuantity === 0n ? 100 : 0),
+      exitPriceUsd: exit?.exitPriceUsd ?? null,
+      realizedPnlRaw: realizedPnl.toString(),
+      realizedPnlDisplay: Number(formatUnits(realizedPnl, decimals)),
+      totalPnlRaw: totalPositionPnl.toString(),
+      totalPnlDisplay: Number(formatUnits(totalPositionPnl, decimals)),
+      closed: remainingQuantity === 0n,
+      eventAt: Date.now(),
     });
 
     return totalPositionPnl;

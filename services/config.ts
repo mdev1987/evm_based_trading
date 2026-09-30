@@ -115,6 +115,9 @@ export type AppConfig = {
   statusIntervalMs: number;
   logPrices: boolean;
   telegram: TelegramConfig;
+  history: {
+    enabled: boolean;
+  };
 };
 
 export const NATIVE_TOKEN_SENTINEL =
@@ -474,6 +477,11 @@ export function getStateFile(configValue: AppConfig, chain: ChainConfig): string
   return `${configValue.stateDir}/${configValue.mode}/${chain.key.toLowerCase()}.json`;
 }
 
+/** Shared analytical history database (all modes/chains, mode is a column). */
+export function getHistoryFile(configValue: AppConfig): string {
+  return `${configValue.stateDir}/history.duckdb`;
+}
+
 export const config: AppConfig = (() => {
   const modeRaw = (env("MODE") ?? "paper").toLowerCase();
   if (modeRaw !== "paper" && modeRaw !== "live") {
@@ -615,6 +623,9 @@ export const config: AppConfig = (() => {
       token: telegramToken,
       chatId: telegramChatId,
       statusEnabled: telegramStatusEnabled,
+    },
+    history: {
+      enabled: bool("HISTORY_ENABLED", true),
     },
   };
 })();
