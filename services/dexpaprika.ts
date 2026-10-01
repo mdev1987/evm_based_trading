@@ -34,7 +34,10 @@ export async function getTokenPriceUsd(
   const url = `${baseUrl}/networks/${encodeURIComponent(network)}/tokens/${encodeURIComponent(tokenAddress)}`;
 
   const headers: Record<string, string> = {};
-  if (options.apiKey) headers["X-API-Key"] = options.apiKey;
+  // Per DexPaprika docs the key is the entire Authorization header value —
+  // no scheme prefix. Anything else (e.g. X-API-Key) is ignored and the call
+  // silently falls back to keyless quota.
+  if (options.apiKey) headers["Authorization"] = options.apiKey;
 
   const response = await fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),

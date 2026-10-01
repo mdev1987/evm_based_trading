@@ -61,6 +61,22 @@ describe("getTokenPriceUsd", () => {
       globalThis.fetch = original;
     }
   });
+
+  test("sends the key as the whole Authorization value (per DexPaprika docs)", async () => {
+    const original = globalThis.fetch;
+    let seen: Record<string, string> = {};
+    globalThis.fetch = (async (_url: unknown, init?: { headers?: Record<string, string> }) => {
+      seen = { ...(init?.headers ?? {}) };
+      return new Response(JSON.stringify({ summary: { price_usd: 1 } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      await getTokenPriceUsd("robinhood", "0xabc", { apiKey: "api_test123" });
+    } finally {
+      globalThis.fetch = original;
+    }
+    expect(seen["Authorization"]).toBe("api_test123");
+    expect(seen["X-API-Key"]).toBeUndefined();
+  });
 });
 
 describe("DexPaprikaPoolService", () => {
