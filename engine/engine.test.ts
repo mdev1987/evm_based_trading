@@ -51,6 +51,7 @@ describe("TradingEngine time-stop", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 1000,
         stopLossPercent: 25,
       }),
@@ -60,6 +61,7 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
         // Stub 0x quote: indicative 12 USDC but guaranteed minimum 11 USDC,
         // zero gas. Paper must settle the pessimistic minimum.
@@ -96,6 +98,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivated: false,
         openedAt,
         lastActionAt: openedAt,
+        lastPriceAt: openedAt,
         pairAddress: "0xpair",
         signalPairAddress: "0xpair",
         dex: "argus",
@@ -145,6 +148,7 @@ describe("TradingEngine time-stop", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 1000,
         stopLossPercent: 25,
       }),
@@ -154,6 +158,7 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
         // 1 USDC quoted gas; paper sell must deduct 2x (swap + approval).
         quoteFn: async () => ({
@@ -187,6 +192,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivated: false,
         openedAt,
         lastActionAt: openedAt,
+        lastPriceAt: openedAt,
         pairAddress: "0xpair",
         signalPairAddress: "0xpair",
         dex: "argus",
@@ -231,6 +237,7 @@ describe("TradingEngine time-stop", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 3_600_000,
         stopLossPercent: 25,
       }),
@@ -240,6 +247,7 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
         quoteFn: async () => ({
           fromTokenAmount: 1000n,
@@ -275,6 +283,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivated: false,
         openedAt,
         lastActionAt: openedAt,
+        lastPriceAt: openedAt,
         pairAddress: "0xpair",
         signalPairAddress: "0xpair",
         dex: "argus",
@@ -321,6 +330,7 @@ describe("TradingEngine time-stop", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 25,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 3_600_000,
         stopLossPercent: 25,
       }),
@@ -330,6 +340,7 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
         // 9 USDC min proceeds, 1 USDC quoted gas → 2 USDC swap+approval.
         quoteFn: async () => ({
@@ -363,6 +374,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivated: false,
         openedAt,
         lastActionAt: openedAt,
+        lastPriceAt: openedAt,
         pairAddress: "0xpair",
         signalPairAddress: "0xpair",
         dex: "argus",
@@ -416,6 +428,7 @@ describe("TradingEngine time-stop", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 25,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 3_600_000,
         stopLossPercent: 25,
       }),
@@ -425,6 +438,7 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
       },
       undefined,
@@ -450,6 +464,7 @@ describe("TradingEngine time-stop", () => {
         trailingActivated: false,
         openedAt,
         lastActionAt: openedAt,
+        lastPriceAt: openedAt,
         pairAddress: "0xsignal",
         signalPairAddress: "0xsignal",
         dex: "argus",
@@ -495,6 +510,7 @@ describe("TradingEngine time-stop", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 60_000,
         stopLossPercent: 25,
       }),
@@ -504,6 +520,7 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
         // Indicative 500 units, guaranteed 495, 1 USDC gas, no approval on Arc.
         quoteFn: async () => ({
@@ -581,10 +598,11 @@ describe("TradingEngine entry snapshot gate", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 30,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 1000,
         stopLossPercent: 25,
       }),
-      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, maxDailyLossPct: 0, baseUsdRate: 1 },
+      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, maxDailyLossPct: 0, staleTimeoutMs: 0, baseUsdRate: 1 },
       undefined,
       async () => undefined,
     );
@@ -664,6 +682,7 @@ describe("TradingEngine daily loss halt", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 25,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 3_600_000,
         stopLossPercent: 25,
       }),
@@ -673,6 +692,7 @@ describe("TradingEngine daily loss halt", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 20,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
         quoteFn: async () => {
           quotes += 1;
@@ -743,6 +763,7 @@ describe("TradingEngine daily loss halt", () => {
         takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
         trailingActivationPercent: 25,
         trailingDistancePercent: 10,
+        staleTimeoutMs: 0,
         maxHoldMs: 3_600_000,
         stopLossPercent: 25,
       }),
@@ -752,6 +773,7 @@ describe("TradingEngine daily loss halt", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
         baseUsdRate: 1,
         quoteFn: async () => {
           quotes += 1;
@@ -793,6 +815,7 @@ describe("TradingEngine live submission journal", () => {
       trailingDistancePercent: 10,
       maxHoldMs: 3_600_000,
       stopLossPercent: 25,
+      staleTimeoutMs: 0,
     });
   }
 
@@ -803,6 +826,7 @@ describe("TradingEngine live submission journal", () => {
       buyAmountBaseRaw: 10n * ONE,
       maxOpenPositions: 3,
       maxDailyLossPct: 0,
+      staleTimeoutMs: 0,
       baseUsdRate: 1,
       quoteFn: async () => ({
         fromTokenAmount: 10n * ONE,
@@ -887,5 +911,128 @@ describe("TradingEngine live submission journal", () => {
     expect(position?.liquidityUsd).toBe(50000);
     expect(position?.costBaseRaw).toBe((10n * ONE).toString());
     expect(store.data.entries).toBe(1);
+  });
+});
+
+describe("TradingEngine stale reaper", () => {
+  const ONE = 10n ** 18n;
+  const THREE_HOURS = 3 * 3_600_000;
+
+  async function reapStore(mode: "paper" | "live", lastPriceAt: number) {
+    const dir = `/tmp/opencode/engine-reap-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode,
+      chain: "Arc",
+      initialBaseRaw: 100n * ONE,
+      initialNativeRaw: 100n * ONE,
+    });
+    const openedAt = Date.now() - 4 * 3_600_000;
+    await store.update((state) => {
+      state.positions["0xstale"] = {
+        tokenAddress: "0xstale",
+        symbol: "STALE",
+        name: "Stale Token",
+        decimals: 18,
+        quantityRaw: "1000",
+        initialQuantityRaw: "1000",
+        costBaseRaw: (10n * ONE).toString(),
+        realizedPnlBaseRaw: "0",
+        entryPriceUsd: 100,
+        currentPriceUsd: 100,
+        highestPriceUsd: 100,
+        feesNativeRaw: "0",
+        takeProfitIndex: 0,
+        trailingActivated: false,
+        openedAt,
+        lastActionAt: openedAt,
+        lastPriceAt,
+        pairAddress: "0xpair",
+        signalPairAddress: "0xpair",
+        dex: "argus",
+        quoteSymbol: "USDC",
+        liquidityUsd: null,
+        snapshot: emptySnapshot(),
+        source: "debot-dashboard",
+      };
+    });
+    const messages: string[] = [];
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 25,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+        staleTimeoutMs: THREE_HOURS,
+      }),
+      {
+        chain,
+        mode,
+        buyAmountBaseRaw: 10n * ONE,
+        maxOpenPositions: 3,
+        maxDailyLossPct: 0,
+        staleTimeoutMs: THREE_HOURS,
+        baseUsdRate: 1,
+      },
+      undefined,
+      async (message) => {
+        messages.push(message);
+      },
+    );
+    return { engine, store, messages };
+  }
+
+  test("paper writes a 4h-unpriced position to $0", async () => {
+    const { engine, store, messages } = await reapStore("paper", Date.now() - 4 * 3_600_000);
+    expect(await engine.reapStalePositions()).toBe(1);
+    expect(store.data.positions["0xstale"]).toBeUndefined();
+    expect(store.data.losses).toBe(1);
+    // Full cost booked as loss; balances untouched (nothing received).
+    expect(store.data.realizedPnlBaseRaw).toBe((-10n * ONE).toString());
+    expect(store.data.balanceBaseRaw).toBe((100n * ONE).toString());
+    expect(messages.some((m) => m.includes("STALE"))).toBe(true);
+  });
+
+  test("paper keeps a freshly priced position", async () => {
+    const { engine, store } = await reapStore("paper", Date.now());
+    expect(await engine.reapStalePositions()).toBe(0);
+    expect(store.data.positions["0xstale"]).toBeDefined();
+    expect(store.data.losses).toBe(0);
+  });
+
+  test("live never force-closes, only reports", async () => {
+    const { engine, store } = await reapStore("live", Date.now() - 4 * 3_600_000);
+    expect(await engine.reapStalePositions()).toBe(0);
+    expect(store.data.positions["0xstale"]).toBeDefined();
+    expect(store.data.losses).toBe(0);
+  });
+
+  test("disabled timeout reaps nothing", async () => {
+    const { store } = await reapStore("paper", Date.now() - 4 * 3_600_000);
+    const engineNoReap = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 25,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+        staleTimeoutMs: THREE_HOURS,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * ONE,
+        maxOpenPositions: 3,
+        maxDailyLossPct: 0,
+        staleTimeoutMs: 0,
+        baseUsdRate: 1,
+      },
+      undefined,
+      async () => undefined,
+    );
+    expect(await engineNoReap.reapStalePositions()).toBe(0);
   });
 });

@@ -257,6 +257,7 @@ async function createRuntime(
         : parseUnits(config.risk.buyAmountBase, chain.baseDecimals, "BUY_AMOUNT_BASE"),
       maxOpenPositions: config.risk.maxOpenPositions,
       maxDailyLossPct: config.risk.maxDailyLossPct,
+      staleTimeoutMs: config.strategy.staleTimeoutMs,
       baseUsdRate: config.mode === "paper" ? paper.usdRate : null,
       history,
     },
@@ -519,6 +520,9 @@ async function main(): Promise<void> {
   console.log(
     `Halt   : ${config.risk.maxDailyLossPct > 0 ? `-${config.risk.maxDailyLossPct}%/day` : "disabled"}`,
   );
+  console.log(
+    `Stale  : ${config.strategy.staleTimeoutMs > 0 ? `${config.strategy.staleTimeoutMs / 3_600_000}h → $0 (paper)` : "disabled"}`,
+  );
 
   const telegram = new TelegramService(config.telegram);
   await telegram.verify();
@@ -590,6 +594,11 @@ async function main(): Promise<void> {
             if (config.mode === "live") {
               await runtime.engine.reconcilePendingSwaps();
               await runtime.engine.syncLiveWallet();
+            } else {
+              const reaped = await runtime.engine.reapStalePositions();
+              if (reaped > 0) {
+                console.log(`[${runtime.chain.name}] Reaped ${reaped} stale position(s) at $0`);
+              }
             }
             const stats = printStats(runtime);
             await runtime.engine.persistMetrics();

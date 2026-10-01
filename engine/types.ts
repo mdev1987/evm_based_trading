@@ -105,6 +105,8 @@ export type Position = {
   trailingActivated: boolean;
   openedAt: number;
   lastActionAt: number;
+  /** Last accepted DexScreener price update; drives the stale-position reaper. */
+  lastPriceAt: number;
   /** Pair/LP address; refreshed from DexScreener on every price update. */
   pairAddress: string;
   /**

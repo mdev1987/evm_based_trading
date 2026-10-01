@@ -73,6 +73,7 @@ function normalizePosition(value: unknown): WalletState["positions"][string] | n
 
   const now = Date.now();
   const symbol = String(position.symbol);
+  const openedAt = finiteNumber(position.openedAt, now);
   return {
     tokenAddress: String(position.tokenAddress),
     symbol,
@@ -98,8 +99,11 @@ function normalizePosition(value: unknown): WalletState["positions"][string] | n
     feesNativeRaw: raw(position.feesNativeRaw, 0n, "position.feesNativeRaw"),
     takeProfitIndex: nonNegativeInteger(position.takeProfitIndex, 0),
     trailingActivated: position.trailingActivated === true,
-    openedAt: finiteNumber(position.openedAt, now),
+    openedAt,
     lastActionAt: finiteNumber(position.lastActionAt, now),
+    // Never-priced legacy positions fall back to open time, so a token that
+    // lost its pool is reaped on the next cycle instead of locking capital.
+    lastPriceAt: finiteNumber(position.lastPriceAt, openedAt),
     pairAddress: typeof position.pairAddress === "string" ? position.pairAddress : "",
     signalPairAddress: typeof position.signalPairAddress === "string"
       ? position.signalPairAddress

@@ -12,6 +12,7 @@ import {
   buildExitMessage,
   buildPlumbingMessage,
   buildTrailingMessage,
+  formatDuration,
   type BalanceSnapshot,
   type WinRateSnapshot,
 } from "./report";
@@ -23,6 +24,11 @@ export type TradingEngineConfig = {
   maxOpenPositions: number;
   /** Block new entries after losing this % of initial bank in one UTC day; 0 disables. */
   maxDailyLossPct: number;
+  /**
+   * Paper-only stale reaper: positions with no price update for this long are
+   * written to $0 (dead pool). 0 disables. Live never force-closes.
+   */
+  staleTimeoutMs: number;
   /** Base-asset USD rate for display hints; null when unknown. */
   baseUsdRate: number | null;
   /**
@@ -390,6 +396,107 @@ export class TradingEngine {
     });
   }
 
+  /**
+   * Reap positions that stopped printing prices (dead pool / delisted pair).
+   * Without this, an unpriced position never triggers TP/trail/stop/time and
+   * locks capital forever — the wallet can neither trade nor recover.
+   *
+   * Paper mode writes the position to $0 (maximally pessimistic: no observable
+   * market means no realizable value) with reason STALE. Live mode never
+   * force-closes real money; it just reports. Returns the stale count.
+   */
+  async reapStalePositions(now = Date.now()): Promise<number> {
+    return this.enqueue(async () => {
+      const timeoutMs = this.config.staleTimeoutMs;
+      if (!(timeoutMs > 0)) return 0;
+      if (this.config.mode !== "paper") {
+        const stale = Object.values(this.store.data.positions).filter(
+          (position) => now - position.lastPriceAt >= timeoutMs,
+        );
+        if (stale.length > 0) {
+          console.log(
+            `[ENGINE][${this.config.chain.name}] ${stale.length} stale position(s) held (live: no route, no force-close): ${stale.map((p) => p.symbol).join(", ")}`,
+          );
+        }
+        return 0;
+      }
+
+      let reaped = 0;
+      for (const position of Object.values(this.store.data.positions)) {
+        if (now - position.lastPriceAt < timeoutMs) continue;
+        const key = position.tokenAddress.toLowerCase();
+        const current = this.store.data.positions[key];
+        if (!current) continue;
+
+        const cost = toBigInt(current.costBaseRaw, "position.costBaseRaw");
+        const before = {
+          baseRaw: toBigInt(this.store.data.balanceBaseRaw, "balanceBaseRaw"),
+          nativeRaw: toBigInt(this.store.data.balanceNativeRaw, "balanceNativeRaw"),
+        };
+        const meta = this.positionMeta(current);
+        const openedAt = current.openedAt;
+        const entryPriceUsd = current.entryPriceUsd;
+        const highestPriceUsd = current.highestPriceUsd;
+        const source = current.source;
+
+        // Total loss of remaining cost; no proceeds, no extra gas. Balances
+        // are untouched (nothing was received); the loss lands in realized.
+        const totalPositionPnl = await this.applySellResult(
+          current,
+          key,
+          0n,
+          0n,
+          -cost,
+          0n,
+          before.baseRaw,
+          before.nativeRaw,
+          undefined,
+          { reason: "STALE", exitPriceUsd: 0, sellPercent: 100 },
+        );
+
+        await this.notify(
+          buildExitMessage({
+            chain: this.config.chain,
+            mode: "paper",
+            closed: true,
+            reason: "STALE",
+            tokenName: meta.tokenName,
+            symbol: current.symbol,
+            tokenAddress: current.tokenAddress,
+            pairAddress: current.pairAddress,
+            dex: meta.dex,
+            quoteSymbol: meta.quoteSymbol,
+            liquidityUsd: current.liquidityUsd,
+            entryPriceUsd,
+            exitPriceUsd: 0,
+            highestPriceUsd,
+            sellPercent: 100,
+            proceedsBaseRaw: 0n,
+            realizedPnlBaseRaw: -cost,
+            totalPositionPnlBaseRaw: totalPositionPnl,
+            remainingQuantityRaw: 0n,
+            remainingQuantityDecimals: current.decimals,
+            remainingCostBaseRaw: 0n,
+            networkFeeRaw: 0n,
+            before,
+            after: before,
+            openedAt,
+            closedAt: now,
+            stats: this.winRateSnapshot(),
+            baseUsdRate: this.config.baseUsdRate,
+            source,
+          }),
+        );
+
+        console.log(
+          `[ENGINE][${this.config.chain.name}] STALE-CLOSED ${current.symbol} | no price for ${formatDuration(now - current.lastPriceAt)} | position PnL ${formatUnits(totalPositionPnl, this.config.chain.baseDecimals)} ${this.config.chain.baseSymbol}`,
+        );
+        reaped += 1;
+      }
+      return reaped;
+    });
+  }
+
   /** Persist current real wallet balances for live-mode recovery. */
   async syncLiveWallet(): Promise<void> {
     return this.enqueue(async () => {
@@ -584,6 +691,7 @@ export class TradingEngine {
       if (!position) return;
 
       position.currentPriceUsd = price.priceUsd;
+      position.lastPriceAt = Date.now();
       const previousHigh = position.highestPriceUsd;
 
       // Keep venue metadata fresh: DexScreener knows the dominant pair/DEX.
@@ -810,6 +918,7 @@ export class TradingEngine {
       trailingActivated: false,
       openedAt: Date.now(),
       lastActionAt: Date.now(),
+      lastPriceAt: Date.now(),
       pairAddress: signal.pairAddress,
       signalPairAddress: signal.pairAddress,
       dex: signal.dex || "unknown",
@@ -1463,6 +1572,7 @@ export class TradingEngine {
         trailingActivated: false,
         openedAt: pending.submittedAt,
         lastActionAt: Date.now(),
+        lastPriceAt: Date.now(),
         pairAddress: pending.pairAddress,
         signalPairAddress: pending.pairAddress,
         dex: pending.dex || "unknown",

@@ -12,6 +12,7 @@ const strategy = new Strategy({
   trailingDistancePercent: 10,
   maxHoldMs: 86_400_000,
   stopLossPercent: 25,
+  staleTimeoutMs: 0,
 });
 
 function position(overrides: Partial<Position> = {}): Position {
@@ -32,6 +33,7 @@ function position(overrides: Partial<Position> = {}): Position {
     trailingActivated: false,
     openedAt: Date.now(),
     lastActionAt: Date.now(),
+    lastPriceAt: Date.now(),
     pairAddress: "0xpair",
     signalPairAddress: "0xpair",
     dex: "uniswap",
@@ -113,6 +115,7 @@ describe("Strategy", () => {
       takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
       trailingActivationPercent: 30,
       trailingDistancePercent: 10,
+      staleTimeoutMs: 0,
       maxHoldMs: 0,
       stopLossPercent: 25,
     });
@@ -143,6 +146,7 @@ describe("Strategy", () => {
       takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
       trailingActivationPercent: 30,
       trailingDistancePercent: 10,
+      staleTimeoutMs: 0,
       maxHoldMs: 86_400_000,
       stopLossPercent: 0,
     });

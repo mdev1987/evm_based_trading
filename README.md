@@ -179,6 +179,9 @@ TAKE_PROFIT_LEVELS=25:50,100:50
 TRAILING_ACTIVATION_PERCENT=25
 TRAILING_DISTANCE_PERCENT=10
 STOP_LOSS_PERCENT=25
+# Stale reaper: paper positions with no price update this long are written to
+# $0 (dead pool; live never force-closes); 0 disables.
+STALE_TIMEOUT_MS=10800000
 ```
 
 This means:
@@ -188,6 +191,7 @@ This means:
 - +25%: trailing stop becomes active.
 - Trailing distance: 10% below the highest observed price.
 - −25%: hard stop-loss, full exit via the 0x sell-quote path.
+- 3h without a price update: paper writes the position to $0 (dead pool; live holds).
 
 The values are examples/defaults, not a performance claim.
 
@@ -318,6 +322,9 @@ TRAILING_DISTANCE_PERCENT=10
 # Time-stop: full exit via the 0x sell-quote path after holding this long (ms); 0 disables.
 # Paper and live both require a quotable route and pay the quoted network fee.
 TIME_STOP_MS=86400000
+# Stale reaper: paper positions with no price update this long are written to
+# $0 (dead pool; live never force-closes); 0 disables.
+STALE_TIMEOUT_MS=10800000
 ```
 
 ### Debot

@@ -82,6 +82,7 @@ export type AppConfig = {
     trailingDistancePercent: number;
     maxHoldMs: number;
     stopLossPercent: number;
+    staleTimeoutMs: number;
   };
   debot: {
     baseUrl: string;
@@ -544,6 +545,7 @@ export const config: AppConfig = (() => {
     trailingDistancePercent: boundedPercent("TRAILING_DISTANCE_PERCENT", 10, 99.999999),
     maxHoldMs: integer("TIME_STOP_MS", 24 * 60 * 60 * 1000, 0),
     stopLossPercent: boundedPercent("STOP_LOSS_PERCENT", 25, 100),
+    staleTimeoutMs: integer("STALE_TIMEOUT_MS", 3 * 60 * 60 * 1000, 0),
   };
 
   const debotDurationRaw = env("DEBOT_DURATION") ?? "1m";

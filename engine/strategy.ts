@@ -13,6 +13,11 @@ export type StrategyConfig = {
   maxHoldMs: number;
   /** Full-exit loss threshold in percent (e.g. 25 = exit at −25%); 0 disables. */
   stopLossPercent: number;
+  /**
+   * Paper stale timeout in ms: positions with no price update this long are
+   * written to $0 (dead pool). 0 disables. Consumed by the engine reaper.
+   */
+  staleTimeoutMs: number;
 };
 
 export type StrategyAction =
