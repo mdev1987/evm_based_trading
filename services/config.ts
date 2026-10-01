@@ -114,6 +114,8 @@ export type AppConfig = {
     apiKey: string;
     timeoutMs: number;
     poolLimit: number;
+    /** Dust floor: pools below this liquidity skip details calls. */
+    poolMinLiqUsd: number;
   };
   zeroEx: {
     apiKey: string;
@@ -633,6 +635,7 @@ export const config: AppConfig = (() => {
       apiKey: env("DEXPAPRIKA_API_KEY") ?? "",
       timeoutMs: integer("DEXPAPRIKA_TIMEOUT_MS", 10_000, 1),
       poolLimit: integer("DEXPAPRIKA_POOL_LIMIT", 10, 1),
+      poolMinLiqUsd: decimal("DEXPAPRIKA_POOL_MIN_LIQ_USD", 100, 0),
     },
     zeroEx: {
       apiKey: required("ZERO_EX_API_KEY"),

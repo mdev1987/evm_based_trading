@@ -84,8 +84,13 @@ describe("DexPaprikaPoolService", () => {
   const NEW_TOKEN = "0x5eeda514f70559198ca9aa973c1f74b58c0d4f0b";
   const NIL = "0x0000000000000000000000000000000000000000";
 
-  function stubClient(pools: unknown[], details: Record<string, unknown>) {
+  function stubClient(
+    pools: unknown[],
+    details: Record<string, unknown>,
+    multiPrices?: Record<string, unknown> | Error,
+  ) {
     let detailCalls = 0;
+    let multiCalls = 0;
     const client = {
       pools: {
         listByNetwork: async () => ({ results: pools }),
@@ -97,9 +102,26 @@ describe("DexPaprikaPoolService", () => {
           if (!hit) throw new Error("not found");
           return hit;
         },
+        getMultiPrices: async (_network: string, tokens: string[]) => {
+          multiCalls += 1;
+          if (multiPrices instanceof Error) throw multiPrices;
+          const known = multiPrices ?? {};
+          return tokens
+            .filter((token) => known[token.toLowerCase()] !== undefined)
+            .map((token) => ({
+              chain: "arc",
+              id: token,
+              price_usd: 1,
+              last_updated: "2026-10-01T00:00:00Z",
+            }));
+        },
       },
     };
-    return { client: client as never, calls: () => detailCalls };
+    return {
+      client: client as never,
+      calls: () => detailCalls,
+      multiCalls: () => multiCalls,
+    };
   }
 
   const arcPool = {
@@ -143,7 +165,38 @@ describe("DexPaprikaPoolService", () => {
     expect(signal?.momentumGainPct1h).toBeCloseTo(139.23, 9);
   });
 
-  test("falls back to token details when pool price is zero", async () => {    const { client } = stubClient([], { [NEW_TOKEN.toLowerCase()]: tokenDetails });
+  test("dust pools skip details calls below the floor", async () => {
+    const dustPool = { ...arcPool, id: "0xdust", liquidity_usd: 50 };
+    const { client, calls } = stubClient([dustPool], { [NEW_TOKEN.toLowerCase()]: tokenDetails });
+    const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", { minPoolLiquidityUsd: 100 }, client);
+    expect(await service.getNewPoolSignals(5)).toEqual([]);
+    expect(calls()).toBe(0);
+  });
+
+  test("pools at the floor still resolve", async () => {
+    const { client, calls } = stubClient([arcPool], { [NEW_TOKEN.toLowerCase()]: tokenDetails });
+    const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", { minPoolLiquidityUsd: 100 }, client);
+    expect((await service.getNewPoolSignals(5)).length).toBe(1);
+    expect(calls()).toBe(1);
+  });
+
+  test("filterIndexed returns only batch-known addresses", async () => {
+    const { client, multiCalls } = stubClient([], {}, { [NEW_TOKEN.toLowerCase()]: true });
+    const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", {}, client);
+    const known = await service.filterIndexed([NEW_TOKEN, "0xunknown"]);
+    expect([...known]).toEqual([NEW_TOKEN.toLowerCase()]);
+    expect(multiCalls()).toBe(1);
+  });
+
+  test("filterIndexed fails open to all addresses", async () => {
+    const { client } = stubClient([], {}, new Error("rate limited"));
+    const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", {}, client);
+    const known = await service.filterIndexed([NEW_TOKEN, "0xunknown"]);
+    expect([...known].sort()).toEqual([NEW_TOKEN.toLowerCase(), "0xunknown"].sort());
+  });
+
+  test("falls back to token details when pool price is zero", async () => {
+    const { client } = stubClient([], { [NEW_TOKEN.toLowerCase()]: tokenDetails });
     const service = new DexPaprikaPoolService("robinhood", WETH, "WETH", {}, client);
     const signal = await service.normalizePool({
       ...arcPool,

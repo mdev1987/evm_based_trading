@@ -80,6 +80,12 @@ export type PoolServiceOptions = {
   limit?: number;
   /** Token-metadata cache TTL; discovery stays live, details are cached. */
   metaCacheTtlMs?: number;
+  /**
+   * Dust floor: pools with measured liquidity below this are skipped before
+   * the per-token details call (each skipped pool saves one request).
+   * Missing liquidity is treated as unknown and still processed. 0 disables.
+   */
+  minPoolLiquidityUsd?: number;
 };
 
 type CachedTokenDetails = {
@@ -145,8 +151,22 @@ export class DexPaprikaPoolService {
     });
 
     const signals: Signal[] = [];
+    const floor = this.options.minPoolLiquidityUsd ?? 0;
     for (const pool of response?.results ?? []) {
       try {
+        // Client-side dust filter: our SDK build cannot forward server-side
+        // search filters, and the discovery list call happens regardless, so
+        // filtering here saves exactly the per-token details calls. Pools
+        // without measured liquidity are treated as unknown, not dust.
+        const poolLiq = pool?.liquidity_usd;
+        if (
+          floor > 0 &&
+          typeof poolLiq === "number" &&
+          Number.isFinite(poolLiq) &&
+          poolLiq < floor
+        ) {
+          continue;
+        }
         const signal = await this.normalizePool(pool);
         if (signal) signals.push(signal);
       } catch (error) {
@@ -259,6 +279,39 @@ export class DexPaprikaPoolService {
     };
     this.metaCache.set(key, entry);
     return entry;
+  }
+
+  /**
+   * Batch liveness pre-check for enrichment: returns the subset of addresses
+   * the indexer knows (up to 10 per request). Tokens missing from the batch
+   * response are unindexed — resolving each via token-details would burn one
+   * request per token just to 404. Fail-open: on transport errors every
+   * address is returned so enrichment degrades to current behavior.
+   */
+  async filterIndexed(addresses: string[]): Promise<Set<string>> {
+    const unique = [...new Set(addresses.map((address) => address.toLowerCase()))];
+    if (unique.length === 0) return new Set();
+    try {
+      const known = new Set<string>();
+      for (let index = 0; index < unique.length; index += 10) {
+        const batch = unique.slice(index, index + 10);
+        const prices = await this.client.tokens.getMultiPrices(this.network, batch) as
+          | Array<{ id?: unknown }>
+          | null
+          | undefined;
+        for (const entry of prices ?? []) {
+          if (entry && typeof entry.id === "string" && entry.id) {
+            known.add(entry.id.toLowerCase());
+          }
+        }
+      }
+      return known;
+    } catch (error) {
+      console.warn(
+        `[DEXPAPRIKA][${this.network}] batch pre-check failed, enriching directly: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return new Set(unique);
+    }
   }
 
   /**

@@ -276,6 +276,7 @@ async function createRuntime(
         apiKey: config.dexpaprika.apiKey || undefined,
         timeoutMs: config.dexpaprika.timeoutMs,
         limit: config.dexpaprika.poolLimit,
+        minPoolLiquidityUsd: config.dexpaprika.poolMinLiqUsd,
       })
     : null;
   // Snapshot enricher for price-only dashboard signals. Reuses the signal
@@ -288,6 +289,7 @@ async function createRuntime(
           apiKey: config.dexpaprika.apiKey || undefined,
           timeoutMs: config.dexpaprika.timeoutMs,
           limit: config.dexpaprika.poolLimit,
+          minPoolLiquidityUsd: config.dexpaprika.poolMinLiqUsd,
         })
       : null);
   const snapshotCache = new Map<string, { at: number; liquidityUsd: number | null; volumeUsd24h: number | null; txns24h: number | null; mktCapUsd: number | null; fdvUsd: number | null }>();
@@ -329,34 +331,68 @@ async function createRuntime(
           // Enrichment runs in small staggered batches: one Promise.all over
           // all ranks bursts DexPaprika and trades 429s for null snapshots.
           if (snapshots) {
+            const readCache = (key: string) => {
+              const cached = snapshotCache.get(key);
+              const ttl = cached &&
+                  (cached.liquidityUsd !== null || cached.volumeUsd24h !== null || cached.txns24h !== null)
+                ? 3600_000
+                : 300_000;
+              return cached && Date.now() - cached.at < ttl ? cached : null;
+            };
+            const applySnap = (
+              rank: (typeof ranks)[number],
+              snap: {
+                liquidityUsd: number | null;
+                volumeUsd24h: number | null;
+                txns24h: number | null;
+                mktCapUsd: number | null;
+                fdvUsd: number | null;
+              },
+            ) => {
+              rank.liquidityUsd = snap.liquidityUsd;
+              Object.assign(rank.snapshot, {
+                volumeUsd24h: snap.volumeUsd24h,
+                txns24h: snap.txns24h,
+                mktCapUsd: snap.mktCapUsd,
+                fdvUsd: snap.fdvUsd,
+              });
+            };
+            // Batch liveness pre-check: unindexed tokens skip their individual
+            // details calls (which would just 404) and cache the miss.
+            const uncachedKeys = [...new Set(
+              ranks
+                .map((rank) => rank.tokenAddress.toLowerCase())
+                .filter((key) => !readCache(key)),
+            )];
+            const indexed = uncachedKeys.length > 0
+              ? await snapshots.filterIndexed(uncachedKeys)
+              : new Set<string>();
             const ENRICH_BATCH = 5;
             const ENRICH_GAP_MS = 250;
             for (let index = 0; index < ranks.length; index += ENRICH_BATCH) {
               await Promise.all(ranks.slice(index, index + ENRICH_BATCH).map(async (rank) => {
                 const key = rank.tokenAddress.toLowerCase();
-                const cached = snapshotCache.get(key);
-                const ttl = cached && (cached.liquidityUsd !== null || cached.volumeUsd24h !== null || cached.txns24h !== null)
-                  ? 3600_000
-                  : 300_000;
-                if (cached && Date.now() - cached.at < ttl) {
-                  rank.liquidityUsd = cached.liquidityUsd;
-                  Object.assign(rank.snapshot, {
-                    volumeUsd24h: cached.volumeUsd24h,
-                    txns24h: cached.txns24h,
-                    mktCapUsd: cached.mktCapUsd,
-                    fdvUsd: cached.fdvUsd,
-                  });
+                const cached = readCache(key);
+                if (cached) {
+                  applySnap(rank, cached);
+                  return;
+                }
+                if (!indexed.has(key)) {
+                  const miss = {
+                    at: Date.now(),
+                    liquidityUsd: null,
+                    volumeUsd24h: null,
+                    txns24h: null,
+                    mktCapUsd: null,
+                    fdvUsd: null,
+                  };
+                  snapshotCache.set(key, miss);
+                  applySnap(rank, miss);
                   return;
                 }
                 const snap = await snapshots.getTokenSnapshot(rank.tokenAddress);
                 snapshotCache.set(key, { at: Date.now(), ...snap });
-                rank.liquidityUsd = snap.liquidityUsd;
-                Object.assign(rank.snapshot, {
-                  volumeUsd24h: snap.volumeUsd24h,
-                  txns24h: snap.txns24h,
-                  mktCapUsd: snap.mktCapUsd,
-                  fdvUsd: snap.fdvUsd,
-                });
+                applySnap(rank, snap);
               }));
               if (index + ENRICH_BATCH < ranks.length) {
                 await new Promise((resolve) => setTimeout(resolve, ENRICH_GAP_MS));
