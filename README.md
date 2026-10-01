@@ -385,6 +385,13 @@ NATIVE_SYMBOL
 NATIVE_DECIMALS
 NATIVE_TO_BASE_RATE
 EXPLORER_URL
+MIN_LIQUIDITY_USD
+MIN_VOLUME_USD_24H
+MIN_TXNS_24H
+ALLOW_UNVERIFIED_SNAPSHOT
+MOMENTUM_OVERRIDE         # 1h rockets waive the volume bar (pools feed only)
+MOMENTUM_MIN_GAIN_PCT
+MOMENTUM_MIN_LIQ_USD
 ```
 
 For Arc the variables are prefixed `ARC_`. For Robinhood Chain they are prefixed `ROBINHOOD_`.

@@ -31,6 +31,9 @@ const chain: ChainConfig = {
   minVolumeUsd24h: 0,
   minTxns24h: 0,
   allowUnverifiedSnapshot: false,
+  momentumOverride: false,
+  momentumMinGainPct: 100,
+  momentumMinLiqUsd: 5000,
 };
 
 describe("TradingEngine time-stop", () => {
@@ -545,6 +548,7 @@ describe("TradingEngine time-stop", () => {
       dex: "argus",
       quoteSymbol: "USDC",
       liquidityUsd: null,
+      momentumGainPct1h: null,
       snapshot: emptySnapshot(),
       source: "debot-dashboard",
     });
@@ -573,6 +577,7 @@ describe("TradingEngine entry snapshot gate", () => {
       dex: "argus",
       quoteSymbol: "USDC",
       liquidityUsd: 50000,
+      momentumGainPct1h: null,
       snapshot: {
         ...emptySnapshot(),
         volumeUsd24h: 20000,
@@ -602,7 +607,14 @@ describe("TradingEngine entry snapshot gate", () => {
         maxHoldMs: 1000,
         stopLossPercent: 25,
       }),
-      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, maxDailyLossPct: 0, staleTimeoutMs: 0, baseUsdRate: 1 },
+      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, maxDailyLossPct: 0, staleTimeoutMs: 0, baseUsdRate: 1,
+        quoteFn: async () => ({
+          fromTokenAmount: 10n * 10n ** 18n,
+          toTokenAmount: 500n * 10n ** 18n,
+          toTokenAmountMin: 495n * 10n ** 18n,
+          fees: [],
+          priceImpact: undefined,
+        }) },
       undefined,
       async () => undefined,
     );
@@ -640,6 +652,68 @@ describe("TradingEngine entry snapshot gate", () => {
     expect(await engine.onSignal(signal({ liquidityUsd: 5000 }))).toBe(false);
     expect(Object.keys(store.data.positions)).toHaveLength(0);
   });
+
+  function momentumChain(): ChainConfig {
+    return gatedChain({
+      minLiquidityUsd: 15000,
+      minVolumeUsd24h: 10000,
+      minTxns24h: 20,
+      allowUnverifiedSnapshot: false,
+      momentumOverride: true,
+      momentumMinGainPct: 100,
+      momentumMinLiqUsd: 5000,
+    });
+  }
+
+  function rocket(overrides: Partial<Signal> = {}): Signal {
+    return signal({
+      liquidityUsd: 6000,
+      momentumGainPct1h: 150,
+      snapshot: { ...emptySnapshot(), volumeUsd24h: 100, txns24h: 25 },
+      ...overrides,
+    });
+  }
+
+  test("momentum rocket waives the volume gate", async () => {
+    const { engine, store } = await gateEngine(momentumChain());
+    expect(await engine.onSignal(rocket())).toBe(true);
+    expect(Object.keys(store.data.positions)).toHaveLength(1);
+  });
+
+  test("weak momentum still gates on liquidity", async () => {
+    const { engine, store } = await gateEngine(momentumChain());
+    expect(await engine.onSignal(rocket({ momentumGainPct1h: 50 }))).toBe(false);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
+
+  test("override off keeps the volume gate", async () => {
+    const { engine, store } = await gateEngine(
+      gatedChain({
+        minLiquidityUsd: 15000,
+        minVolumeUsd24h: 10000,
+        minTxns24h: 20,
+        allowUnverifiedSnapshot: false,
+      }),
+    );
+    expect(await engine.onSignal(rocket())).toBe(false);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
+
+  test("rocket without measured liq stays unverified", async () => {
+    const { engine, store } = await gateEngine(momentumChain());
+    expect(await engine.onSignal(rocket({ liquidityUsd: null }))).toBe(false);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
+
+  test("rocket below the txns bar still skips", async () => {
+    const { engine, store } = await gateEngine(momentumChain());
+    expect(
+      await engine.onSignal(
+        rocket({ snapshot: { ...emptySnapshot(), volumeUsd24h: 100, txns24h: 3 } }),
+      ),
+    ).toBe(false);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
+  });
 });
 
 describe("TradingEngine daily loss halt", () => {
@@ -656,6 +730,7 @@ describe("TradingEngine daily loss halt", () => {
       dex: "argus",
       quoteSymbol: "USDC",
       liquidityUsd: null,
+      momentumGainPct1h: null,
       snapshot: emptySnapshot(),
       source: "debot-dashboard",
     };
@@ -803,6 +878,7 @@ describe("TradingEngine live submission journal", () => {
       dex: "argus",
       quoteSymbol: "USDC",
       liquidityUsd: 50000,
+      momentumGainPct1h: null,
       snapshot: emptySnapshot(),
       source: "debot-dashboard",
     };

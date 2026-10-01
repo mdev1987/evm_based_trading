@@ -70,6 +70,12 @@ export type Signal = {
   snapshot: EntrySnapshot;
   /** Feed that produced the signal: debot-community, debot-dashboard, dexpaprika-pools. */
   source: string;
+  /**
+   * Measured 1h price gain in percent when the feed reports it (DexPaprika
+   * pools only). Powers the per-chain momentum override in the entry gate;
+   * null everywhere else. Entry-time only, never refreshed.
+   */
+  momentumGainPct1h: number | null;
 };
 
 /** DexScreener price snapshot normalized for the engine. */

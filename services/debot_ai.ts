@@ -204,6 +204,7 @@ export function normalizeDashboardRank(item: DebotDashboardRankItem): Signal | n
     liquidityUsd: null,
     // Dashboard items carry price only; main.ts enriches the snapshot from
     // DexPaprika before the engine's entry filters run.
+    momentumGainPct1h: null,
     snapshot: emptySnapshot(),
     source: "debot-dashboard",
   };

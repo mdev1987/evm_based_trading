@@ -45,6 +45,15 @@ export type ChainConfig = {
   minTxns24h: number;
   /** When true, missing snapshot data passes enabled gates (measured values still gated). */
   allowUnverifiedSnapshot: boolean;
+  /**
+   * Momentum override: a measured 1h rocket at/above momentumMinGainPct with
+   * liquidity at/above momentumMinLiqUsd waives the 24h-volume gate (txns and
+   * the lowered liq bar still apply). Off by default; only feeds reporting 1h
+   * gain (DexPaprika pools) can ever trigger it.
+   */
+  momentumOverride: boolean;
+  momentumMinGainPct: number;
+  momentumMinLiqUsd: number;
 };
 
 export type TelegramConfig = {
@@ -173,6 +182,9 @@ const CHAIN_DEFAULTS: Record<SupportedChain, ChainConfig> = {
     minVolumeUsd24h: 0,
     minTxns24h: 0,
     allowUnverifiedSnapshot: false,
+    momentumOverride: false,
+    momentumMinGainPct: 100,
+    momentumMinLiqUsd: 5000,
   },
   ROBINHOOD: {
     key: "ROBINHOOD",
@@ -227,6 +239,9 @@ const CHAIN_DEFAULTS: Record<SupportedChain, ChainConfig> = {
     minVolumeUsd24h: 0,
     minTxns24h: 0,
     allowUnverifiedSnapshot: false,
+    momentumOverride: false,
+    momentumMinGainPct: 100,
+    momentumMinLiqUsd: 5000,
   },
 };
 
@@ -455,6 +470,9 @@ function buildChainConfig(key: SupportedChain): ChainConfig {
     minVolumeUsd24h: decimal(`${prefix}_MIN_VOLUME_USD_24H`, defaults.minVolumeUsd24h, 0),
     minTxns24h: integer(`${prefix}_MIN_TXNS_24H`, defaults.minTxns24h, 0),
     allowUnverifiedSnapshot: bool(`${prefix}_ALLOW_UNVERIFIED_SNAPSHOT`, defaults.allowUnverifiedSnapshot),
+    momentumOverride: bool(`${prefix}_MOMENTUM_OVERRIDE`, defaults.momentumOverride),
+    momentumMinGainPct: decimal(`${prefix}_MOMENTUM_MIN_GAIN_PCT`, defaults.momentumMinGainPct, 0),
+    momentumMinLiqUsd: decimal(`${prefix}_MOMENTUM_MIN_LIQ_USD`, defaults.momentumMinLiqUsd, 0),
   };
 }
 

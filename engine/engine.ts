@@ -298,8 +298,19 @@ export class TradingEngine {
    * Returns the skip reason, or null to pass.
    */
   private snapshotGate(signal: Signal): string | null {
-    const { minLiquidityUsd, minVolumeUsd24h, minTxns24h, allowUnverifiedSnapshot } =
+    const { minVolumeUsd24h, minTxns24h, allowUnverifiedSnapshot } =
       this.config.chain;
+
+    // Momentum override: a measured 1h rocket with routable liquidity waives
+    // the volume bar and lowers the liq bar to the override floor (never
+    // raises it). Only feeds reporting 1h gain can qualify; txns still apply.
+    const momentumQualified = this.config.chain.momentumOverride &&
+      signal.momentumGainPct1h !== null &&
+      signal.momentumGainPct1h >= this.config.chain.momentumMinGainPct &&
+      signal.liquidityUsd !== null;
+    const minLiquidityUsd = momentumQualified
+      ? Math.min(this.config.chain.minLiquidityUsd, this.config.chain.momentumMinLiqUsd)
+      : this.config.chain.minLiquidityUsd;
 
     if (minLiquidityUsd > 0) {
       if (signal.liquidityUsd === null) {
@@ -311,7 +322,7 @@ export class TradingEngine {
       }
     }
 
-    if (minVolumeUsd24h > 0) {
+    if (minVolumeUsd24h > 0 && !momentumQualified) {
       if (signal.snapshot.volumeUsd24h === null) {
         if (!allowUnverifiedSnapshot) {
           return `unverified vol24 (need >= ${compactUsd(minVolumeUsd24h)})`;
@@ -329,6 +340,12 @@ export class TradingEngine {
       } else if (signal.snapshot.txns24h < minTxns24h) {
         return `low txns ${signal.snapshot.txns24h} < ${minTxns24h}`;
       }
+    }
+
+    if (momentumQualified) {
+      console.log(
+        `[ENGINE][${this.config.chain.name}] MOMENTUM ${signal.symbol}: +${signal.momentumGainPct1h?.toFixed(1)}% 1h waives vol gate`,
+      );
     }
 
     return null;

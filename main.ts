@@ -221,6 +221,7 @@ function normalizeSignal(signal: Awaited<ReturnType<DebotAIService["getRank"]>>[
       : "unknown",
     quoteSymbol: typeof signal.base_token?.symbol === "string" ? signal.base_token.symbol : "",
     liquidityUsd: liquidity,
+    momentumGainPct1h: null,
     snapshot,
     source: "debot-community",
   };
@@ -294,6 +295,13 @@ async function createRuntime(
   const lastEntryAt = new Map<string, number>();
 
   console.log(`[${chain.name}] Signals: ${chain.signalSources.join(", ")}`);
+  console.log(
+    `[${chain.name}] Momentum override: ${
+      chain.momentumOverride
+        ? `ON (+${chain.momentumMinGainPct}% 1h, liq ≥ $${chain.momentumMinLiqUsd}, vol waived)`
+        : "off"
+    }`,
+  );
 
   /**
    * Fetch candidates from every active source as normalized engine signals.

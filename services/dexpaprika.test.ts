@@ -117,8 +117,17 @@ describe("DexPaprikaPoolService", () => {
     expect(signal?.source).toBe("dexpaprika-pools");
   });
 
-  test("falls back to token details when pool price is zero", async () => {
+  test("carries the pool 1h momentum gain onto the signal", async () => {
     const { client } = stubClient([], { [NEW_TOKEN.toLowerCase()]: tokenDetails });
+    const service = new DexPaprikaPoolService("arc", "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", "USDC", {}, client);
+    const signal = await service.normalizePool({
+      ...arcPool,
+      price_change_percentage_1h: 139.23,
+    } as never);
+    expect(signal?.momentumGainPct1h).toBeCloseTo(139.23, 9);
+  });
+
+  test("falls back to token details when pool price is zero", async () => {    const { client } = stubClient([], { [NEW_TOKEN.toLowerCase()]: tokenDetails });
     const service = new DexPaprikaPoolService("robinhood", WETH, "WETH", {}, client);
     const signal = await service.normalizePool({
       ...arcPool,

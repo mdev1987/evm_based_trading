@@ -198,6 +198,10 @@ export class DexPaprikaPoolService {
       dex: pool.dex_name || "unknown",
       quoteSymbol: this.baseSymbol,
       liquidityUsd: liquidity,
+      momentumGainPct1h: typeof pool.price_change_percentage_1h === "number" &&
+          Number.isFinite(pool.price_change_percentage_1h)
+        ? pool.price_change_percentage_1h
+        : null,
       snapshot: {
         volumeUsd24h: snapshotNumber(pool.volume_usd_24h),
         txns24h: snapshotNumber(pool.transactions_24h),
