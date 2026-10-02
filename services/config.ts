@@ -77,6 +77,12 @@ export type AppConfig = {
     /** USD-denominated paper sizing; null = use legacy raw base-unit amounts. */
     initialUsd: string | null;
     buyAmountUsd: string | null;
+    /**
+     * Dry-run probes: paper mode quotes gate-passing signals and records the
+     * outcome (routable or quote:<code>) without opening positions or touching
+     * balances. Observation instrument for routability research; live ignores it.
+     */
+    dryRun: boolean;
   };
   risk: {
     buyAmountBase: string;
@@ -84,6 +90,8 @@ export type AppConfig = {
     signalReentryCooldownMs: number;
     /** Block new entries after losing this % of initial bank in one UTC day; 0 disables. */
     maxDailyLossPct: number;
+    /** Max dry-run quotes per signal poll; 0 = unlimited. */
+    dryRunMaxQuotesPerPoll: number;
   };
   strategy: {
     takeProfits: TakeProfitConfig[];
@@ -526,6 +534,7 @@ export const config: AppConfig = (() => {
     initialNative: env("PAPER_INITIAL_NATIVE") ?? "0.01",
     initialUsd: optionalPositiveUsd("PAPER_INITIAL_USD"),
     buyAmountUsd: optionalPositiveUsd("BUY_AMOUNT_USD"),
+    dryRun: bool("PAPER_DRY_RUN", false),
   };
 
   // USD-denominated paper sizing is all-or-nothing; when set, both the
@@ -553,6 +562,7 @@ export const config: AppConfig = (() => {
     maxOpenPositions: integer("MAX_OPEN_POSITIONS", 3, 1),
     signalReentryCooldownMs: integer("SIGNAL_REENTRY_COOLDOWN_MS", 6 * 60 * 60 * 1000, 0),
     maxDailyLossPct: boundedPercent("MAX_DAILY_LOSS_PCT", 20, 100),
+    dryRunMaxQuotesPerPoll: integer("DRY_RUN_MAX_QUOTES_PER_POLL", 8, 0),
   };
 
   for (const chain of chains) {

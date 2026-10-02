@@ -259,6 +259,8 @@ async function createRuntime(
       maxOpenPositions: config.risk.maxOpenPositions,
       maxDailyLossPct: config.risk.maxDailyLossPct,
       staleTimeoutMs: config.strategy.staleTimeoutMs,
+      dryRun: config.paper.dryRun,
+      dryRunMaxQuotesPerPoll: config.risk.dryRunMaxQuotesPerPoll,
       baseUsdRate: config.mode === "paper" ? paper.usdRate : null,
       history,
     },
@@ -433,6 +435,7 @@ async function createRuntime(
 
   const refreshSignals = async (): Promise<void> => {
     try {
+      engine.beginSignalPoll();
       const signals = await fetchSignals();
       const now = Date.now();
 
@@ -567,6 +570,11 @@ async function main(): Promise<void> {
   console.log(
     `Stale  : ${config.strategy.staleTimeoutMs > 0 ? `${config.strategy.staleTimeoutMs / 3_600_000}h → $0 (paper)` : "disabled"}`,
   );
+  if (config.mode === "paper" && config.paper.dryRun) {
+    console.log(
+      `DryRun : ON — quotes recorded as routability probes, no entries (budget ${config.risk.dryRunMaxQuotesPerPoll}/poll)`,
+    );
+  }
 
   const telegram = new TelegramService(config.telegram);
   await telegram.verify();
@@ -624,6 +632,9 @@ async function main(): Promise<void> {
       haltSummary: config.risk.maxDailyLossPct > 0
         ? `-${config.risk.maxDailyLossPct}%/day`
         : "disabled",
+      drySummary: config.mode === "paper" && config.paper.dryRun
+        ? `ON (probe budget ${config.risk.dryRunMaxQuotesPerPoll}/poll, no entries)`
+        : "off",
     });
 
     let statusRunning = false;

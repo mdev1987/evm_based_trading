@@ -17,6 +17,7 @@ export type StartupInfo = {
   trailingSummary: string;
   stopSummary: string;
   haltSummary: string;
+  drySummary: string;
 };
 
 /** Context shown on the shutdown banner. */
@@ -93,6 +94,7 @@ export class TelegramService {
       `🛡️ Trailing: ${info.trailingSummary}\n` +
       `🛑 Stop: ${info.stopSummary}\n` +
       `⛔ Daily halt: ${info.haltSummary}\n` +
+      `🧪 Dry-run: ${info.drySummary}\n` +
       `🕒 Started: ${utcNow()}`,
     );
   }

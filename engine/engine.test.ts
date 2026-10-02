@@ -64,6 +64,8 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
         // Stub 0x quote: indicative 12 USDC but guaranteed minimum 11 USDC,
@@ -161,6 +163,8 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
         // 1 USDC quoted gas; paper sell must deduct 2x (swap + approval).
@@ -250,6 +254,8 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
         quoteFn: async () => ({
@@ -343,6 +349,8 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
         // 9 USDC min proceeds, 1 USDC quoted gas → 2 USDC swap+approval.
@@ -441,6 +449,8 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
       },
@@ -523,6 +533,8 @@ describe("TradingEngine time-stop", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
         // Indicative 500 units, guaranteed 495, 1 USDC gas, no approval on Arc.
@@ -607,7 +619,7 @@ describe("TradingEngine entry snapshot gate", () => {
         maxHoldMs: 1000,
         stopLossPercent: 25,
       }),
-      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, maxDailyLossPct: 0, staleTimeoutMs: 0, baseUsdRate: 1,
+      { chain: entryChain, mode: "paper", buyAmountBaseRaw: 10n * 10n ** 18n, maxOpenPositions: 3, maxDailyLossPct: 0, staleTimeoutMs: 0, dryRun: false, dryRunMaxQuotesPerPoll: 0, baseUsdRate: 1,
         quoteFn: async () => ({
           fromTokenAmount: 10n * 10n ** 18n,
           toTokenAmount: 500n * 10n ** 18n,
@@ -767,6 +779,8 @@ describe("TradingEngine daily loss halt", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 20,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
         quoteFn: async () => {
@@ -848,6 +862,8 @@ describe("TradingEngine daily loss halt", () => {
         buyAmountBaseRaw: 10n * 10n ** 18n,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
         quoteFn: async () => {
@@ -903,6 +919,8 @@ describe("TradingEngine live submission journal", () => {
       maxOpenPositions: 3,
       maxDailyLossPct: 0,
       staleTimeoutMs: 0,
+      dryRun: false,
+      dryRunMaxQuotesPerPoll: 0,
       baseUsdRate: 1,
       quoteFn: async () => ({
         fromTokenAmount: 10n * ONE,
@@ -1049,6 +1067,8 @@ describe("TradingEngine stale reaper", () => {
         buyAmountBaseRaw: 10n * ONE,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: THREE_HOURS,
         baseUsdRate: 1,
       },
@@ -1103,6 +1123,8 @@ describe("TradingEngine stale reaper", () => {
         buyAmountBaseRaw: 10n * ONE,
         maxOpenPositions: 3,
         maxDailyLossPct: 0,
+        dryRun: false,
+        dryRunMaxQuotesPerPoll: 0,
         staleTimeoutMs: 0,
         baseUsdRate: 1,
       },
@@ -1110,5 +1132,117 @@ describe("TradingEngine stale reaper", () => {
       async () => undefined,
     );
     expect(await engineNoReap.reapStalePositions()).toBe(0);
+  });
+});
+
+describe("TradingEngine dry-run probes", () => {
+  const ONE = 10n ** 18n;
+  const today = new Date().toISOString().slice(0, 10);
+
+  function probeSignal(symbol = "PROBE"): Signal {
+    return {
+      tokenAddress: `0x${symbol.toLowerCase()}probe`,
+      symbol,
+      name: `${symbol} Token`,
+      decimals: 18,
+      pairAddress: "0xpair",
+      priceUsd: 1,
+      dex: "argus",
+      quoteSymbol: "USDC",
+      liquidityUsd: 6000,
+      momentumGainPct1h: null,
+      snapshot: emptySnapshot(),
+      source: "debot-dashboard",
+    };
+  }
+
+  async function probeEngine(opts: { maxQuotes: number }) {
+    const dir = `/tmp/opencode/engine-dry-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const store = await createStateStore({
+      file: `${dir}/arc.json`,
+      mode: "paper",
+      chain: "Arc",
+      initialBaseRaw: 100n * ONE,
+      initialNativeRaw: 100n * ONE,
+    });
+    // Broke and halt-tripped: dry-run must probe regardless of both.
+    await store.update((state) => {
+      state.balanceBaseRaw = ONE.toString();
+      state.balanceNativeRaw = ONE.toString();
+      state.realizedPnlBaseRaw = (-25n * ONE).toString();
+      state.riskDay = today;
+      state.riskDayStartRealizedPnlRaw = "0";
+    });
+    let quotes = 0;
+    const skips: Array<{ reason: string }> = [];
+    const history = {
+      recordSkip: async (skip: { reason: string }) => {
+        skips.push(skip);
+      },
+    };
+    const engine = new TradingEngine(
+      store,
+      new Strategy({
+        takeProfits: [{ gainPercent: 25, sellPercent: 50 }],
+        trailingActivationPercent: 25,
+        trailingDistancePercent: 10,
+        maxHoldMs: 3_600_000,
+        stopLossPercent: 25,
+        staleTimeoutMs: 0,
+      }),
+      {
+        chain,
+        mode: "paper",
+        buyAmountBaseRaw: 10n * ONE,
+        maxOpenPositions: 3,
+        maxDailyLossPct: 20,
+        staleTimeoutMs: 0,
+        dryRun: true,
+        dryRunMaxQuotesPerPoll: opts.maxQuotes,
+        baseUsdRate: 1,
+        quoteFn: async () => {
+          quotes += 1;
+          return {
+            fromTokenAmount: 10n * ONE,
+            toTokenAmount: 500n * ONE,
+            toTokenAmountMin: 495n * ONE,
+            fees: [],
+            priceImpact: undefined,
+          };
+        },
+        history: history as never,
+      },
+      undefined,
+      async () => undefined,
+    );
+    return { engine, store, quotes: () => quotes, skips };
+  }
+
+  test("records routability without opening or spending", async () => {
+    const { engine, store, quotes, skips } = await probeEngine({ maxQuotes: 0 });
+    engine.beginSignalPoll();
+    expect(await engine.onSignal(probeSignal())).toBe(false);
+    expect(quotes()).toBe(1);
+    expect(Object.keys(store.data.positions)).toHaveLength(0);
+    expect(store.data.balanceBaseRaw).toBe(ONE.toString());
+    expect(skips.map((s) => s.reason)).toEqual(["quote:dry-ok"]);
+  });
+
+  test("caps quotes per poll", async () => {
+    const { engine, quotes, skips } = await probeEngine({ maxQuotes: 1 });
+    engine.beginSignalPoll();
+    expect(await engine.onSignal(probeSignal("A"))).toBe(false);
+    expect(await engine.onSignal(probeSignal("B"))).toBe(false);
+    expect(quotes()).toBe(1);
+    expect(skips.map((s) => s.reason)).toEqual(["quote:dry-ok"]);
+  });
+
+  test("budget resets on the next poll", async () => {
+    const { engine, quotes } = await probeEngine({ maxQuotes: 1 });
+    engine.beginSignalPoll();
+    expect(await engine.onSignal(probeSignal("A"))).toBe(false);
+    engine.beginSignalPoll();
+    expect(await engine.onSignal(probeSignal("B"))).toBe(false);
+    expect(quotes()).toBe(2);
   });
 });

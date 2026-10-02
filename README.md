@@ -120,6 +120,11 @@ Paper mode never loads a private key and never submits a blockchain transaction.
 
 The bot still obtains live 0x indicative quotes, so a paper entry can be skipped when 0x has no route/liquidity or exceeds the configured fee limits.
 
+`PAPER_DRY_RUN=true` turns paper into a routability scanner: gate-passing signals
+are quoted and recorded as `quote:dry-ok` / `quote:<code>` skips (with liq/vol/txns)
+without opening positions or touching balances. Fences and funds are bypassed
+(nothing is at risk); `DRY_RUN_MAX_QUOTES_PER_POLL` caps quotes per poll.
+
 Example defaults:
 
 ```dotenv

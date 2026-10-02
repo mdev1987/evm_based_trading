@@ -24,6 +24,10 @@ export type TradingEngineConfig = {
   maxOpenPositions: number;
   /** Block new entries after losing this % of initial bank in one UTC day; 0 disables. */
   maxDailyLossPct: number;
+  /** Paper dry-run: quote gate-passers and record routability, never open. */
+  dryRun: boolean;
+  /** Max dry-run quotes per signal poll; 0 = unlimited. */
+  dryRunMaxQuotesPerPoll: number;
   /**
    * Paper-only stale reaper: positions with no price update for this long are
    * written to $0 (dead pool). 0 disables. Live never force-closes.
@@ -112,6 +116,8 @@ function positiveLoss(before: bigint, after: bigint): bigint {
  */
 export class TradingEngine {
   private queue = Promise.resolve();
+  private dryRunQuotes = 0;
+  private dryRunBudgetLogged = false;
 
   constructor(
     private readonly store: StateStore,
@@ -129,6 +135,17 @@ export class TradingEngine {
       () => undefined,
     );
     return next;
+  }
+
+  /** Reset the per-poll dry-run quote budget; called once per signal poll. */
+  beginSignalPoll(): void {
+    this.dryRunQuotes = 0;
+    this.dryRunBudgetLogged = false;
+  }
+
+  /** Dry-run probes quote but never spends: paper mode plus the env flag. */
+  private isDryRun(): boolean {
+    return this.config.mode === "paper" && this.config.dryRun;
   }
 
   /** Report an event without allowing Telegram failures to break trading. */
@@ -567,8 +584,9 @@ export class TradingEngine {
       // Cheap preflight before spending a 0x quote: the base leg must cover
       // the trade amount on its own (the fee leg is verified after the quote).
       // Paper reads the store for free; live keeps the post-quote check to
-      // avoid an RPC storm per signal.
-      if (this.config.mode === "paper") {
+      // avoid an RPC storm per signal. Dry-run probes spend nothing, so the
+      // wallet state is irrelevant there.
+      if (this.config.mode === "paper" && !this.isDryRun()) {
         const paperBase = toBigInt(
           this.store.data.balanceBaseRaw,
           "balanceBaseRaw",
@@ -581,7 +599,9 @@ export class TradingEngine {
         }
       }
 
-      const haltReason = await this.checkDailyLossHalt();
+      // Dry-run never opens, so realized losses cannot accrue from it: the
+      // halt (which guards spend) does not apply to probes.
+      const haltReason = !this.isDryRun() ? await this.checkDailyLossHalt() : null;
       if (haltReason) {
         console.log(
           `[ENGINE][${this.config.chain.name}] SKIP ${signal.symbol}: ${haltReason}`,
@@ -632,6 +652,19 @@ export class TradingEngine {
 
       let quote: Awaited<ReturnType<typeof getZeroExQuote>>;
       try {
+        if (this.isDryRun()) {
+          const budget = this.config.dryRunMaxQuotesPerPoll;
+          if (budget > 0 && this.dryRunQuotes >= budget) {
+            if (!this.dryRunBudgetLogged) {
+              this.dryRunBudgetLogged = true;
+              console.log(
+                `[ENGINE][${this.config.chain.name}] dry-run quote budget exhausted (${budget}/poll)`,
+              );
+            }
+            return false;
+          }
+          this.dryRunQuotes += 1;
+        }
         quote = await this.quote({
           chainId: this.config.chain.chainId,
           fromToken: this.config.chain.baseToken,
@@ -657,6 +690,28 @@ export class TradingEngine {
       }
 
       const estimatedNetworkFee = getNetworkFee(quote);
+
+      // Dry-run probe outcome: the quote succeeded, so the token is routable
+      // at this size. Record it for research and stop — no balance touched,
+      // no position opened.
+      if (this.isDryRun()) {
+        await this.history()?.recordSkip({
+          chain: this.config.chain.name,
+          symbol: signal.symbol,
+          tokenAddress: signal.tokenAddress,
+          source: signal.source,
+          reason: "quote:dry-ok",
+          liqUsd: signal.liquidityUsd,
+          vol24Usd: signal.snapshot.volumeUsd24h,
+          txns24: signal.snapshot.txns24h,
+          eventAt: Date.now(),
+        });
+        console.log(
+          `[ENGINE][${this.config.chain.name}] PROBE ${signal.symbol}: routable (min ${formatUnits(quote.toTokenAmountMin, signal.decimals)} ${signal.symbol})`,
+        );
+        return false;
+      }
+
       const before = await this.getWalletBalances();
 
       if (this.config.chain.baseIsNative) {
